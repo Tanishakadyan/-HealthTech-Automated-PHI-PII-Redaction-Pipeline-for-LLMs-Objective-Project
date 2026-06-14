@@ -4,9 +4,11 @@ import re
 
 app = FastAPI()
 
-# Pre-compiled regex pattern
 EMAIL_PATTERN = re.compile(
-    r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    r'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+'
+)
+PHONE_PATTERN = re.compile(
+    r'\b\d{10}\b'
 )
 
 @app.get("/")
@@ -16,6 +18,7 @@ def home():
 class TextInput(BaseModel):
     text: str = Field(
         ...,
+        min_length=1,
         max_length=50000,
         description="Input text for PII redaction"
     )
@@ -31,9 +34,18 @@ def redact(data: TextInput):
         "[EMAIL_REDACTED]",
         data.text
     )
+    phone_count = len(
+    PHONE_PATTERN.findall(redacted_text)
+)
+
+    redacted_text = PHONE_PATTERN.sub(
+        "[PHONE_REDACTED]",
+    redacted_text
+)
 
     return {
         "status": "success",
         "redacted_text": redacted_text,
-        "emails_found": email_count
+        "emails_found": email_count,
+        "phones_found": phone_count
     }
