@@ -2,7 +2,7 @@ import re
 
 text = """
 Patient John Smith
-Email: Chigozieihezie1616@gmail.com
+Email: johnsmith@gmail.com
 """
 
 email_pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
