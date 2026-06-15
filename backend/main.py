@@ -10,6 +10,9 @@ EMAIL_PATTERN = re.compile(
 PHONE_PATTERN = re.compile(
     r'\b\d{10}\b'
 )
+IP_PATTERN = re.compile(
+    r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+)
 
 @app.get("/")
 def home():
@@ -42,10 +45,19 @@ def redact(data: TextInput):
         "[PHONE_REDACTED]",
     redacted_text
 )
+    ip_count = len(
+    IP_PATTERN.findall(redacted_text)
+)
 
+    redacted_text = IP_PATTERN.sub(
+    "[IP_REDACTED]",
+    redacted_text
+)
+    
     return {
-        "status": "success",
-        "redacted_text": redacted_text,
-        "emails_found": email_count,
-        "phones_found": phone_count
+    "status": "success",
+    "redacted_text": redacted_text,
+    "emails_found": email_count,
+    "phones_found": phone_count,
+    "ips_found": ip_count
     }
