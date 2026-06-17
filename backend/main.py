@@ -66,7 +66,10 @@ IP_PATTERN = re.compile(
     r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}'           
     r'(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b'
 )
-
+MRN_PATTERN = re.compile(
+    r'\b(?:MRN|Medical Record Number)\s*[:#=]?\s*\d+\b',
+    re.IGNORECASE
+)
 
 
 class TextInput(BaseModel):
@@ -156,11 +159,18 @@ def redact(request: Request, data: TextInput):
     # Name Redaction (Presidio)
     redacted_text, name_count = redact_names(redacted_text)
 
+    mrn_count = len(MRN_PATTERN.findall(redacted_text))
+    redacted_text = MRN_PATTERN.sub(
+    "[MRN_REDACTED]",
+    redacted_text
+)
+
     return {
         "status": "success",
         "redacted_text": redacted_text,
         "emails_found": email_count,
         "phones_found": phone_count,
         "ips_found": ip_count,
-        "names_found": name_count
+        "names_found": name_count,
+        "mrns_found": mrn_count
     }
