@@ -11,21 +11,21 @@
 
 ```
 ┌─────────────────────────────────────┐
-│  FRONTEND  (Member 4)               │
+│  FRONTEND  (Suvajit Ray)               │
 │  HTML + Bootstrap + JavaScript      │
 │  User enters text → sees result     │
 └────────────────┬────────────────────┘
                  │ HTTP POST /redact
                  ▼
 ┌─────────────────────────────────────┐
-│  BACKEND API  (Member 1)            │
+│  BACKEND API  (Sathish)            │
 │  Python FastAPI                     │
 │  /redact  →  /restore               │
 └────────────────┬────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────┐
-│  PHI DETECTION ENGINE  (Member 2)   │
+│  PHI DETECTION ENGINE  (Emmanuel)   │
 │  Microsoft Presidio + spaCy NER     │
 │  Detects: Names, Phones, Emails,    │
 │  Addresses, MRN, Dates              │
@@ -33,7 +33,7 @@
                  │
                  ▼
 ┌─────────────────────────────────────┐
-│  TOKEN STORAGE  (Member 3)          │
+│  TOKEN STORAGE  (Tanisha)          │
 │  Redis Database                     │
 │  PATIENT_001 ↔ John Smith           │
 │  PHONE_001   ↔ +1-555-123-4567      │
