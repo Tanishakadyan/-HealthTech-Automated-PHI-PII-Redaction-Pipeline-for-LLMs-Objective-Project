@@ -1,4 +1,4 @@
-# Member 4 — Frontend & Documentation
+# Frontend & Documentation
 ## PHI/PII Redaction Pipeline — Infotact Cybersecurity Internship
 
 This README covers **only Member 4's part** of the project: the frontend (what the
