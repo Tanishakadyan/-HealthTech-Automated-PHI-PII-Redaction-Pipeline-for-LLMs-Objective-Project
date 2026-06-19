@@ -1,54 +1,101 @@
-/* DAY 6: Light grey background so white cards stand out */
 body {
   background-color: #f0f2f5;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   color: #212529;
 }
 
-/* DAY 6: Limit max width so content doesn't stretch too wide on big monitors */
 .container {
   max-width: 1100px;
 }
 
-
-/* ============================================================
-   DAY 6: NAVBAR
-   ============================================================ */
-
-/* DAY 6: Subtle shadow under the navbar to separate it from content */
 .navbar {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 
-
-/* ============================================================
-   DAY 4: RESULT CARD (where redacted text appears)
-   ============================================================ */
-
-/* DAY 4: The output box where redacted text is displayed */
 #resultCard {
   background-color: #ffffff;
   border-color: #dee2e6 !important;
-  /* line-height: set in HTML inline style */
-  /* overflow-y: set in HTML inline style */
-  word-wrap: break-word;     /* DAY 17: prevents long words from overflowing */
+  word-wrap: break-word;
   word-break: break-word;
 }
 
-/* DAY 4: When hovered, slightly highlight the result card border */
 #resultCard:hover {
   border-color: #adb5bd !important;
 }
 
-
-/* ============================================================
-   DAY 3: TEXTAREA INPUT
-   ============================================================ */
-
-/* DAY 3: Allow vertical resize only (not horizontal — avoids layout breaking) */
 textarea#inputText {
   resize: vertical;
   font-size: 13px;
   font-family: 'Segoe UI', sans-serif;
   line-height: 1.6;
+}
+
+@media (max-width: 576px) {
+  textarea#inputText {
+    rows: 6;
+    min-height: 150px;
+  }
+}
+
+.redacted-token {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 1px 2px;
+  border: 1px solid transparent;
+  cursor: default;
+  transition: opacity 0.15s ease;
+}
+
+.redacted-token:hover {
+  opacity: 0.8;
+}
+
+.entity-NAME {
+  background-color: #cfe2ff;
+  border-color: #9ec5fe;
+  color: #084298;
+}
+
+.entity-PHONE {
+  background-color: #d1e7dd;
+  border-color: #a3cfbb;
+  color: #0a3622;
+}
+
+.entity-EMAIL {
+  background-color: #d2f4ea;
+  border-color: #75ddb8;
+  color: #0d503c;
+}
+
+.entity-ADDRESS {
+  background-color: #f8d7da;
+  border-color: #f1aeb5;
+  color: #842029;
+}
+
+.entity-MRN {
+  background-color: #e2d9f3;
+  border-color: #c5b3e6;
+  color: #432874;
+}
+
+.entity-DATE {
+  background-color: #fff3cd;
+  border-color: #ffc107;
+  color: #664d03;
+}
+
+.entity-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
 }
