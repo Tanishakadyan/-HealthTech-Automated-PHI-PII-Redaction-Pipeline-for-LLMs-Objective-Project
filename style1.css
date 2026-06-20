@@ -99,3 +99,76 @@ textarea#inputText {
   font-weight: 600;
   border: 1px solid transparent;
 }
+
+.card {
+  border: 1px solid #e5e7eb;
+}
+
+.card-header {
+  border-bottom: 1px solid #e5e7eb !important;
+}
+
+footer {
+  background-color: #ffffff;
+  margin-top: 2rem;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  
+  #input-section {
+    margin-bottom: 1rem;
+  }
+  
+  .d-flex.gap-2 {
+    flex-wrap: wrap;
+  }
+  
+  .btn {
+    font-size: 13px;
+    padding: 6px 14px;
+  }
+  
+  #resultCard {
+    max-height: 280px !important;
+  }
+  
+  .navbar-brand {
+    font-size: 15px !important;
+  }
+}
+
+@media (max-width: 576px) {
+  .sample-btn {
+    font-size: 12px;
+    padding: 4px 10px;
+  }
+  
+  .navbar {
+    padding: 10px 16px;
+  }
+}
+
+button:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 3px solid #0d6efd;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+#statsBar {
+  border-radius: 6px;
+  border-left: 4px solid #0dcaf0;
+}
+
+.show-flex {
+  display: flex !important;
+}
+
+.show-block {
+  display: block !important;
+}
