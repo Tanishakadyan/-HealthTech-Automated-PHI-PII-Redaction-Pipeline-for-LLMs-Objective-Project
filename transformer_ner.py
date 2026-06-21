@@ -24,8 +24,11 @@ TITLE_WORDS = {
     "miss",
     "prof",
     "professor",
+    # "patient" is intentionally excluded here — it is a context keyword,
+    # not a personal title, and must NOT be treated as a standalone name token.
 }
 
+# Words that are never person names — clinical/administrative vocabulary.
 IGNORE_WORDS = {
     "admission",
     "admitted",
@@ -70,6 +73,32 @@ IGNORE_WORDS = {
     "symptom",
     "treatment",
     "ward",
+    # Additional common FP sources
+    "report",
+    "reports",
+    "medical",
+    "clinical",
+    "care",
+    "health",
+    "record",
+    "department",
+    "unit",
+    "test",
+    "result",
+    "results",
+    "scan",
+    "imaging",
+    "notes",
+    "note",
+    "history",
+    "chief",
+    "complaint",
+    "assessment",
+    "plan",
+    "impression",
+    "findings",
+    "impression",
+    "procedure",
 }
 
 MONTHS_AND_DAYS = {
@@ -107,11 +136,14 @@ MONTHS_AND_DAYS = {
 }
 
 STOP_WORDS = IGNORE_WORDS | MONTHS_AND_DAYS | TITLE_WORDS
+
 NAME_TOKEN_PATTERN = r"(?:[A-Z]\.|[A-Z][A-Za-z'-]*)"
 NAME_SEQUENCE_PATTERN = rf"{NAME_TOKEN_PATTERN}(?:\s+{NAME_TOKEN_PATTERN}){{0,3}}"
 
+# Titles that directly precede a name.  "Patient" added here so
+# "Patient Robert Brown" → Robert Brown is detected.
 TITLE_NAME_PATTERN = re.compile(
-    r"\b(?P<title>(?i:Dr|Doctor|Mr|Mrs|Ms|Miss|Prof|Professor))\.?\s*"
+    r"\b(?P<title>(?i:Dr|Doctor|Mr|Mrs|Ms|Miss|Prof|Professor|Patient))\.?\s*"
     rf"(?P<name>{NAME_SEQUENCE_PATTERN})\b"
 )
 
@@ -135,8 +167,9 @@ NAME_BEFORE_ACTION_PATTERN = re.compile(
     r"(?=visited|was\s+admitted|was\s+referred|consulted|met|called|reported)\b"
 )
 
+# Matches a leading title+separator so it can be stripped from merged spans.
 TITLE_PREFIX_PATTERN = re.compile(
-    r"^(?P<title>(?i:Dr|Doctor|Mr|Mrs|Ms|Miss|Prof|Professor))"
+    r"^(?P<title>(?i:Dr|Doctor|Mr|Mrs|Ms|Miss|Prof|Professor|Patient))"
     r"(?P<separator>\.?\s*)"
 )
 
@@ -193,6 +226,7 @@ def _is_valid_name_text(value: str) -> bool:
     if not tokens or len(tokens) > 4:
         return False
 
+    # All tokens are title words with no meaningful name → reject.
     meaningful_tokens = [token for token in tokens if token.lower() not in TITLE_WORDS]
     if not meaningful_tokens:
         return False
@@ -203,6 +237,7 @@ def _is_valid_name_text(value: str) -> bool:
             return False
         if len(normalized) < 2:
             return False
+        # ALL-CAPS abbreviations are not names (e.g. MRI, ICU).
         if token.isupper() and len(token) > 1:
             return False
 
@@ -275,6 +310,12 @@ def _detect_with_transformer(text: str) -> list[NameEntity]:
 
 
 def _detect_title_names(text: str) -> list[NameEntity]:
+    """
+    Detect names preceded by a personal title or the word 'Patient'.
+
+    Supported: Dr, Dr., Doctor, Mr, Mr., Mrs, Mrs., Ms, Miss,
+               Prof, Prof., Professor, Patient
+    """
     entities: list[NameEntity] = []
     for match in TITLE_NAME_PATTERN.finditer(text):
         name = _clean_name_text(match.group("name"))
@@ -360,6 +401,7 @@ def _merge_adjacent(text: str, entities: Sequence[NameEntity | Mapping[str, obje
 
 
 def _strip_title_from_span(text: str, entity: NameEntity) -> NameEntity:
+    """Remove a leading personal title from a merged span, keeping only the name."""
     raw_span = text[entity.start:entity.end]
     match = TITLE_PREFIX_PATTERN.match(raw_span)
     if not match:
@@ -428,6 +470,14 @@ def detect_name_entities(text: str) -> list[NameEntity]:
     """
     Detect likely person-name spans using transformer NER plus conservative
     healthcare-specific title and context rules.
+
+    Detection pipeline:
+    1. Transformer NER (dslim/bert-base-NER) — chunked for long documents.
+    2. Title-based rules — Dr, Mr, Mrs, Ms, Miss, Prof, Professor, Patient.
+    3. Context-based rules — "patient name is", "referred by", "signed by", etc.
+    4. Merge adjacent spans separated by whitespace/punctuation.
+    5. Strip leading title tokens from merged spans.
+    6. Filter via STOP_WORDS and structural heuristics.
     """
     if not text:
         return []
