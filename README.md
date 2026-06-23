@@ -11,14 +11,14 @@
 
 ```
 ┌─────────────────────────────────────┐
-│  FRONTEND  (Suvajit Ray)               │
+│  FRONTEND  (Suvajit Ray)            │
 │  HTML + Bootstrap + JavaScript      │
 │  User enters text → sees result     │
 └────────────────┬────────────────────┘
                  │ HTTP POST /redact
                  ▼
 ┌─────────────────────────────────────┐
-│  BACKEND API  (Sathish)            │
+│  BACKEND API  (Sathish)             │
 │  Python FastAPI                     │
 │  /redact  →  /restore               │
 └────────────────┬────────────────────┘
@@ -33,7 +33,7 @@
                  │
                  ▼
 ┌─────────────────────────────────────┐
-│  TOKEN STORAGE  (Tanisha)          │
+│  TOKEN STORAGE  (Tanisha)           │
 │  Redis Database                     │
 │  PATIENT_001 ↔ John Smith           │
 │  PHONE_001   ↔ +1-555-123-4567      │
