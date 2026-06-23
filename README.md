@@ -53,10 +53,10 @@
 
 | Member | Role | Technologies |
 |--------|------|-------------|
-| Member 1 | Backend API | Python, FastAPI, Uvicorn |
-| Member 2 | PHI Detection | Microsoft Presidio, spaCy, Regex |
-| Member 3 | Token Storage | Redis, Python redis-py |
-| Member 4 | Frontend + Documentation | HTML5, CSS3, Bootstrap 5, JavaScript |
+| Satish | Backend API | Python, FastAPI, Uvicorn |
+| Emmanuel | PHI Detection | Microsoft Presidio, spaCy, Regex |
+| Tanisha | Token Storage | Redis, Python redis-py |
+| Suvajit Ray | Frontend + Documentation | HTML5, CSS3, Bootstrap 5, JavaScript |
 
 ---
 
