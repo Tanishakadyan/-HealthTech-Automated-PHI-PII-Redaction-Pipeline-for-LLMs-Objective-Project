@@ -367,18 +367,12 @@ class RedactionResponse(BaseModel):
 # Core redaction helpers
 # ---------------------------------------------------------------------------
 
-def _count_matches(pattern: re.Pattern[str], text: str) -> int:
-    return sum(1 for _ in pattern.finditer(text))
-
-
 def _apply_structured_redactions(text: str) -> tuple[str, dict[str, int]]:
-    counts = {
-        key: _count_matches(pattern, text)
-        for key, pattern, _replacement in STRUCTURED_PATTERNS
-    }
+    counts: dict[str, int] = {}
     redacted_text = text
-    for _key, pattern, replacement in STRUCTURED_PATTERNS:
-        redacted_text = pattern.sub(replacement, redacted_text)
+    for key, pattern, replacement in STRUCTURED_PATTERNS:
+        redacted_text, n = pattern.subn(replacement, redacted_text)
+        counts[key] = n
     return redacted_text, counts
 
 
