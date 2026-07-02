@@ -16,13 +16,21 @@ from dataclasses import dataclass
 
 try:
     from backend.main import (
+        ACCOUNT_PATTERN,
         ADDRESS_PATTERN,
+        AGE_PATTERN,
+        DEVICE_PATTERN,
         DOB_PATTERN,
         EMAIL_PATTERN,
+        FACILITY_PATTERN,
+        FAX_PATTERN,
+        HEALTH_PLAN_PATTERN,
         IP_PATTERN,
         LICENSE_PATTERN,
+        LOCATION_PATTERN,
         MRN_PATTERN,
         PHONE_PATTERN,
+        SSN_PATTERN,
         URL_PATTERN,
         VIN_PATTERN,
         TextInput,
@@ -273,12 +281,28 @@ NAME_TEST_CASES: list[RedactionTestCase] = [
         notes="Clinical terms must not be redacted",
     ),
     RedactionTestCase(
-        name="no_fp_hospital_name",
-        input_text="Admitted to Apollo Hospital on Monday.",
-        expected_output="Admitted to Apollo Hospital on Monday.",
+        name="uppercase_patient_name",
+        input_text="Patient JOHN SMITH was admitted.",
+        expected_output="Patient [NAME_REDACTED] was admitted.",
+        category="healthcare_names",
+        expected_name_count=1,
+        notes="Uppercase chart headers should still redact names",
+    ),
+    RedactionTestCase(
+        name="no_fp_department_to",
+        input_text="Send to Cardiology for review.",
+        expected_output="Send to Cardiology for review.",
         category="healthcare_names",
         expected_name_count=0,
-        notes="Org names — FP risk; hospital is in stopwords",
+        notes="Generic 'to' should not trigger name redaction",
+    ),
+    RedactionTestCase(
+        name="no_fp_hospital_name",
+        input_text="Admitted to Apollo Hospital on Monday.",
+        expected_output="Admitted to [FACILITY_REDACTED] on Monday.",
+        category="healthcare_names",
+        expected_name_count=0,
+        notes="Hospitals are redacted by the facility recognizer",
     ),
 ]
 
@@ -300,6 +324,16 @@ REGEX_TEST_CASES: list[tuple[str, str, str]] = [
     ("dob_iso", "Date: 1990-07-22", "DOB"),
     ("address_street", "456 MG Road, Bangalore", "ADDRESS"),
     ("address_nagar", "12 Gandhi Nagar", "ADDRESS"),
+    ("ssn_labeled", "SSN: 123-45-6789", "SSN"),
+    ("ssn_unlabeled_dash", "Patient SSN is 123-45-6789", "SSN"),
+    ("fax_labeled", "Fax: 415-555-0199", "FAX"),
+    ("account_number", "Account Number: 123456789", "ACCOUNT"),
+    ("health_plan_id", "Health Plan ID: HP1234567", "HEALTH_PLAN"),
+    ("device_imei", "IMEI: 490154203237518", "DEVICE"),
+    ("age_over_89", "Age 92 male", "AGE"),
+    ("location_city", "City: Bangalore", "LOCATION"),
+    ("location_zip", "ZIP: 560001", "LOCATION"),
+    ("facility_hospital", "Admitted to Apollo Hospital", "FACILITY"),
     # URL (≥10 tests)
     ("url_https", "Visit https://hospital.com for info", "URL"),
     ("url_http", "See http://clinic.org/appointments", "URL"),
@@ -415,12 +449,20 @@ def run_regex_tests() -> EvalResult:
         return EvalResult()
 
     pattern_map = {
+        "ACCOUNT": ACCOUNT_PATTERN,
         "EMAIL": EMAIL_PATTERN,
+        "AGE": AGE_PATTERN,
+        "DEVICE": DEVICE_PATTERN,
+        "FACILITY": FACILITY_PATTERN,
+        "FAX": FAX_PATTERN,
+        "HEALTH_PLAN": HEALTH_PLAN_PATTERN,
         "PHONE": PHONE_PATTERN,
         "IP": IP_PATTERN,
         "MRN": MRN_PATTERN,
         "DOB": DOB_PATTERN,
         "ADDRESS": ADDRESS_PATTERN,
+        "LOCATION": LOCATION_PATTERN,
+        "SSN": SSN_PATTERN,
         "URL": URL_PATTERN,
         "VIN": VIN_PATTERN,
         "LICENSE": LICENSE_PATTERN,
@@ -516,9 +558,9 @@ def run_entity_merge_tests() -> EvalResult:
 
 
 def run_structured_redaction_integration_tests() -> EvalResult:
-    """Integration tests for URL, VIN, License via full structured redaction pipeline."""
+    """Integration tests for full structured redaction pipeline ordering."""
     print("\n" + "=" * 72)
-    print("STRUCTURED REDACTION INTEGRATION TESTS (URL / VIN / LICENSE)")
+    print("STRUCTURED REDACTION INTEGRATION TESTS")
     print("=" * 72)
 
     if not MODULES_AVAILABLE:
@@ -532,6 +574,16 @@ def run_structured_redaction_integration_tests() -> EvalResult:
         ("URL_http_path", "Referral form at http://forms.nhs.gov/referral/submit", "[URL_REDACTED]"),
         ("URL_query_string", "API call https://api.hospital.com/v1/records?id=99", "[URL_REDACTED]"),
         ("URL_mixed_case", "Visit HTTPS://Hospital.COM", "[URL_REDACTED]"),
+        ("SSN_labeled", "SSN: 123-45-6789", "[SSN_REDACTED]"),
+        ("MRN_not_phone", "MRN: 1234567", "[MRN_REDACTED]"),
+        ("ACCOUNT_not_phone", "Account Number: 123456789", "[ACCOUNT_REDACTED]"),
+        ("HEALTH_PLAN", "Health Plan ID: HP1234567", "[HEALTH_PLAN_REDACTED]"),
+        ("DEVICE_IMEI", "IMEI: 490154203237518", "[DEVICE_REDACTED]"),
+        ("FAX_labeled", "Fax: 415-555-0199", "[FAX_REDACTED]"),
+        ("AGE_over_89", "Age 92 male", "[AGE_REDACTED]"),
+        ("LOCATION_zip", "ZIP: 560001", "[LOCATION_REDACTED]"),
+        ("FACILITY_hospital", "Admitted to Apollo Hospital", "[FACILITY_REDACTED]"),
+        ("PHONE_india", "+91 98765 43210 ext", "[PHONE_REDACTED]"),
         ("VIN_in_note", "Ambulance VIN 1HGCM82633A004352 was logged.", "[VIN_REDACTED]"),
         ("VIN_mid_sentence", "Insured vehicle 4T1BF3EK8AU561234 involved in accident.", "[VIN_REDACTED]"),
         ("VIN_end", "Patient transported via 2HGFG12609H501234", "[VIN_REDACTED]"),
@@ -578,7 +630,7 @@ def print_summary(
         ("Name Redaction", name_result),
         ("Regex Detection", regex_result),
         ("Merge Helpers", merge_result),
-        ("Integration (URL/VIN/LIC)", integration_result),
+        ("Integration", integration_result),
         ("Combined", combined),
     ):
         print(

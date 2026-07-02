@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
@@ -13,6 +14,8 @@ MODEL_NAME = os.getenv("PHI_NER_MODEL", "dslim/bert-base-NER")
 NAME_REDACTION_TOKEN = "[NAME_REDACTED]"
 
 _NER_PIPELINE = None
+_NER_PIPELINE_FAILED = False
+_NER_PIPELINE_LOCK = threading.Lock()
 
 
 TITLE_WORDS = {
@@ -79,9 +82,12 @@ IGNORE_WORDS = {
     "medical",
     "clinical",
     "care",
+    "cardiology",
     "health",
     "record",
     "department",
+    "diabetes",
+    "emergency",
     "unit",
     "test",
     "result",
@@ -99,6 +105,38 @@ IGNORE_WORDS = {
     "findings",
     "impression",
     "procedure",
+    "radiology",
+    "oncology",
+    "neurology",
+    "orthopedics",
+    "paediatrics",
+    "pediatrics",
+    "pathology",
+    "pharmacy",
+    "was",
+    "were",
+    "is",
+    "are",
+}
+
+CLINICAL_ACRONYMS = {
+    "bp",
+    "bpm",
+    "ct",
+    "dna",
+    "ecg",
+    "ekg",
+    "er",
+    "icu",
+    "id",
+    "iv",
+    "mri",
+    "mrn",
+    "or",
+    "opd",
+    "icu",
+    "urology",
+    "xray",
 }
 
 MONTHS_AND_DAYS = {
@@ -135,7 +173,7 @@ MONTHS_AND_DAYS = {
     "december",
 }
 
-STOP_WORDS = IGNORE_WORDS | MONTHS_AND_DAYS | TITLE_WORDS
+STOP_WORDS = IGNORE_WORDS | MONTHS_AND_DAYS | TITLE_WORDS | CLINICAL_ACRONYMS
 
 NAME_TOKEN_PATTERN = r"(?:[A-Z]\.|[A-Z][A-Za-z'-]*)"
 NAME_SEQUENCE_PATTERN = rf"{NAME_TOKEN_PATTERN}(?:\s+{NAME_TOKEN_PATTERN}){{0,3}}"
@@ -151,7 +189,7 @@ CONTEXT_NAME_PATTERN = re.compile(
     r"\b(?i:"
     r"patient(?:\s+name)?|pt|name|doctor\s+name|provider|physician|clinician|"
     r"guardian|contact|attending|surgeon|consultant|referred\s+by|seen\s+by|"
-    r"reviewed\s+by|signed\s+by|sent\s+to|send\s+to|email\s+to|to|by"
+    r"reviewed\s+by|signed\s+by|dictated\s+by|sent\s+to|send\s+to|email\s+to"
     r")\b\s*(?i:is|was|:|-)?\s+"
     rf"(?P<name>{NAME_SEQUENCE_PATTERN})\b",
 )
@@ -194,16 +232,29 @@ class NameEntity:
 
 def get_ner_pipeline():
     """Load the Hugging Face NER pipeline lazily so app imports stay fast."""
-    global _NER_PIPELINE
-    if _NER_PIPELINE is None:
-        from transformers import pipeline
+    global _NER_PIPELINE, _NER_PIPELINE_FAILED
+    if _NER_PIPELINE_FAILED:
+        return None
 
-        _NER_PIPELINE = pipeline(
-            "ner",
-            model=MODEL_NAME,
-            tokenizer=MODEL_NAME,
-            aggregation_strategy="simple",
-        )
+    if _NER_PIPELINE is None:
+        with _NER_PIPELINE_LOCK:
+            if _NER_PIPELINE is None:
+                try:
+                    from transformers import pipeline
+
+                    _NER_PIPELINE = pipeline(
+                        "ner",
+                        model=MODEL_NAME,
+                        tokenizer=MODEL_NAME,
+                        aggregation_strategy="simple",
+                    )
+                except Exception as exc:
+                    _NER_PIPELINE_FAILED = True
+                    logger.warning(
+                        "Transformer NER unavailable; continuing with rules: %s",
+                        exc,
+                    )
+                    return None
     return _NER_PIPELINE
 
 
@@ -211,6 +262,14 @@ def _clean_name_text(value: str) -> str:
     value = value.replace("##", "")
     value = re.sub(r"\s+", " ", value)
     return value.strip(" \t\r\n,;:()[]{}")
+
+
+def _trim_name_span(text: str, start: int, end: int) -> tuple[int, int, str]:
+    while start < end and text[start] in " \t\r\n,;:()[]{}":
+        start += 1
+    while end > start and text[end - 1] in " \t\r\n,;:()[]{}":
+        end -= 1
+    return start, end, _clean_name_text(text[start:end])
 
 
 def _is_valid_name_text(value: str) -> bool:
@@ -237,8 +296,7 @@ def _is_valid_name_text(value: str) -> bool:
             return False
         if len(normalized) < 2:
             return False
-        # ALL-CAPS abbreviations are not names (e.g. MRI, ICU).
-        if token.isupper() and len(token) > 1:
+        if normalized in CLINICAL_ACRONYMS:
             return False
 
     return True
@@ -284,6 +342,9 @@ def _detect_with_transformer(text: str) -> list[NameEntity]:
     detected: list[NameEntity] = []
     try:
         ner = get_ner_pipeline()
+        if ner is None:
+            return []
+
         for offset, chunk in _iter_chunks(text):
             for entity in ner(chunk):
                 entity_group = str(entity.get("entity_group") or entity.get("entity") or "")
@@ -292,7 +353,13 @@ def _detect_with_transformer(text: str) -> list[NameEntity]:
 
                 start = offset + int(entity["start"])
                 end = offset + int(entity["end"])
-                value = _clean_name_text(text[start:end] or str(entity.get("word", "")))
+                start, end, value = _trim_name_span(
+                    text,
+                    start,
+                    end,
+                )
+                if not value:
+                    value = _clean_name_text(str(entity.get("word", "")))
                 if _is_valid_name_text(value):
                     detected.append(
                         NameEntity(
@@ -429,14 +496,16 @@ def _post_process(text: str, entities: Sequence[NameEntity | Mapping[str, object
     for raw_entity in entities:
         entity = _coerce_entity(raw_entity)
         entity = _strip_title_from_span(text, entity)
-        value = _clean_name_text(text[entity.start:entity.end] or entity.text)
+        start, end, value = _trim_name_span(text, entity.start, entity.end)
+        if not value:
+            value = _clean_name_text(entity.text)
         if not _is_valid_name_text(value):
             continue
         normalized.append(
             NameEntity(
                 text=value,
-                start=entity.start,
-                end=entity.end,
+                start=start,
+                end=end,
                 score=entity.score,
                 source=entity.source,
             )

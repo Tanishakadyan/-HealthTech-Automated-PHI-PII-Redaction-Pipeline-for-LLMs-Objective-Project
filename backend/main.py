@@ -4,12 +4,15 @@ import html
 import logging
 import os
 import re
+import secrets
+from functools import lru_cache
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -26,28 +29,51 @@ from transformer_ner import (
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-MAX_TEXT_LENGTH = int(os.getenv("MAX_REDACTION_CHARS", "50000"))
-PRESIDIO_PERSON_THRESHOLD = float(os.getenv("PRESIDIO_PERSON_THRESHOLD", "0.80"))
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %s", name, raw_value, default)
+        return default
 
-EMAIL_REDACTION_TOKEN   = "[EMAIL_REDACTED]"
-PHONE_REDACTION_TOKEN   = "[PHONE_REDACTED]"
-IP_REDACTION_TOKEN      = "[IP_REDACTED]"
-MRN_REDACTION_TOKEN     = "[MRN_REDACTED]"
-DOB_REDACTION_TOKEN     = "[DOB_REDACTED]"
+
+def _env_float(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %s", name, raw_value, default)
+        return default
+
+
+MAX_TEXT_LENGTH = _env_int("MAX_REDACTION_CHARS", 50000)
+PRESIDIO_PERSON_THRESHOLD = _env_float("PRESIDIO_PERSON_THRESHOLD", 0.80)
+PRESIDIO_LANGUAGE = os.getenv("PRESIDIO_LANGUAGE", "en").strip() or "en"
+PRESIDIO_SPACY_MODEL = os.getenv("PRESIDIO_SPACY_MODEL", "").strip()
+REDACTION_API_KEY = os.getenv("REDACTION_API_KEY", "").strip()
+
+EMAIL_REDACTION_TOKEN = "[EMAIL_REDACTED]"
+PHONE_REDACTION_TOKEN = "[PHONE_REDACTED]"
+FAX_REDACTION_TOKEN = "[FAX_REDACTED]"
+IP_REDACTION_TOKEN = "[IP_REDACTED]"
+MRN_REDACTION_TOKEN = "[MRN_REDACTED]"
+DOB_REDACTION_TOKEN = "[DOB_REDACTED]"
+AGE_REDACTION_TOKEN = "[AGE_REDACTED]"
 ADDRESS_REDACTION_TOKEN = "[ADDRESS_REDACTED]"
-URL_REDACTION_TOKEN     = "[URL_REDACTED]"
-VIN_REDACTION_TOKEN     = "[VIN_REDACTED]"
+LOCATION_REDACTION_TOKEN = "[LOCATION_REDACTED]"
+FACILITY_REDACTION_TOKEN = "[FACILITY_REDACTED]"
+URL_REDACTION_TOKEN = "[URL_REDACTED]"
+SSN_REDACTION_TOKEN = "[SSN_REDACTED]"
+ACCOUNT_REDACTION_TOKEN = "[ACCOUNT_REDACTED]"
+HEALTH_PLAN_REDACTION_TOKEN = "[HEALTH_PLAN_REDACTED]"
+DEVICE_REDACTION_TOKEN = "[DEVICE_REDACTED]"
+VIN_REDACTION_TOKEN = "[VIN_REDACTED]"
 LICENSE_REDACTION_TOKEN = "[LICENSE_REDACTED]"
-
-
-try:
-    analyzer: AnalyzerEngine | None = AnalyzerEngine()
-except Exception as exc:
-    logger.warning(
-        "Presidio AnalyzerEngine unavailable; continuing without Presidio PERSON fallback: %s",
-        exc,
-    )
-    analyzer = None
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -60,7 +86,9 @@ def _cors_origins() -> list[str]:
 app = FastAPI(
     title="PHI/PII Redaction API",
     description="""
-Healthcare PHI/PII Redaction Service — HIPAA-Compliant Data Masking.
+Healthcare PHI/PII Redaction Service for HIPAA de-identification workflows.
+Deployment compliance still requires access controls, audit controls,
+encryption, retention policy, and vendor/business-associate controls.
 
 ## Features
 
@@ -68,10 +96,13 @@ Healthcare PHI/PII Redaction Service — HIPAA-Compliant Data Masking.
 - **Name Redaction** — Hybrid NER (Transformer + Title/Context rules + Presidio)
 - **Email Redaction** — RFC-5321 compliant email pattern matching
 - **Phone Number Redaction** — US, international, and Indian phone formats
+- **Fax Redaction** — fax labels plus phone-number formats
 - **IP Address Redaction** — IPv4 / IPv6 address detection
 - **MRN Redaction** — Medical Record Number with common label prefixes
-- **DOB Redaction** — Date of Birth in multiple date formats
+- **SSN / Account / Health Plan / Device ID Redaction** — labeled identifiers
+- **Date and Age Redaction** — full dates and ages over 89
 - **Address Redaction** — Street addresses with common road suffixes
+- **Location and Facility Redaction** — labeled geographic values and hospitals/clinics
 - **URL Redaction** — HTTP/HTTPS and bare `www.` URLs
 - **VIN Redaction** — 17-character Vehicle Identification Numbers (NHTSA format)
 - **License Number Redaction** — Driver's license and government-issued ID numbers
@@ -85,19 +116,21 @@ Healthcare PHI/PII Redaction Service — HIPAA-Compliant Data Masking.
 
 ### Production Features
 - Rate limiting (SlowAPI)
+- Optional API-key enforcement via `REDACTION_API_KEY`
+- No-store response headers
 - Input sanitisation (HTML injection, null bytes, invisible characters)
 - Configurable CORS
 - Structured JSON responses with per-entity counts
 - Horizontal chunk processing for large documents
 
 ### HIPAA PHI Categories Covered
-18 of 18 HIPAA Safe Harbour identifiers addressed:
-Names, Geographic data, Dates, Phone, Fax, Email, SSN (via MRN/ID patterns),
-MRN, Health plan numbers, Account numbers, Certificate/license numbers,
-VINs, Device identifiers, URLs, IP addresses, Biometric identifiers,
-Full-face photographs (out of scope for text API), Any unique identifying number.
+Text identifiers addressed include names, geographic data, dates, ages over 89,
+phone, fax, email, SSN, MRN, health plan numbers, account numbers,
+certificate/license numbers, VINs, device identifiers, URLs, IP addresses,
+facilities, and other labeled unique identifiers. Biometric identifiers and
+full-face photographs are out of scope for this text API.
 """,
-    version="1.2.0",
+    version="1.3.0",
 )
 
 app.state.limiter = limiter
@@ -106,7 +139,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
 
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -121,6 +154,44 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"status": "error", "message": "Internal server error"},
     )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Cache-Control", "no-store")
+    response.headers.setdefault("Pragma", "no-cache")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    return response
+
+
+def _bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        return ""
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return token.strip()
+
+
+def require_api_key(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> None:
+    if not REDACTION_API_KEY:
+        return
+
+    provided_keys = (x_api_key or "", _bearer_token(authorization))
+    if not any(
+        secrets.compare_digest(provided, REDACTION_API_KEY)
+        for provided in provided_keys
+        if provided
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid API key",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -172,27 +243,33 @@ EMAIL_PATTERN = re.compile(
 )
 
 
-PHONE_PATTERN = re.compile(
-    r"""
-    (?<!\w)
-
-   
-    (?:\+?\d{1,3}[\s.\-\/]?)?
-
-   
-    (?:\(?\d{1,4}\)?[\s.\-\/]?)?
-
-   
+_PHONE_NUMBER = r"""
     (?:
-        \d{3}[\s.\-]?\d{4}               
-        |\d{4}[\s.\-]?\d{4}              
-        |\d{2}[\s.\-]?\d{4}[\s.\-]?\d{4} 
+        \+\d{10,15}
+        |
+        (?:\+?\d{1,3}[\s.\-/]+)?
+        (?:
+            \(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}
+            |\d{5}[\s.\-]\d{5}
+            |\d{2}[\s.\-]\d{4}[\s.\-]\d{4}
+            |\d{4}[\s.\-]\d{4}
+            |\d{3}[\s.\-]\d{4}
+            |\d{10,15}
+        )
     )
+"""
+_PHONE_EXTENSION = r"(?:\s*(?:x|ext\.?|extension|\#)\s*\d{1,6})?"
 
-    # Optional extension — \# escapes # so re.VERBOSE doesn't treat it as comment
-    (?:[\s]*(?:x|ext\.?|extension|\#)[\s]*\d{1,6})?
+PHONE_PATTERN = re.compile(
+    rf"(?<![\w]){_PHONE_NUMBER}{_PHONE_EXTENSION}(?![\w])",
+    re.VERBOSE | re.IGNORECASE,
+)
 
-    (?!\w)
+FAX_PATTERN = re.compile(
+    rf"""
+    \b(?:fax|facsimile)(?:\s*(?:no\.?|number))?\s*[:#=-]?\s*
+    {_PHONE_NUMBER}{_PHONE_EXTENSION}
+    (?![\w])
     """,
     re.VERBOSE | re.IGNORECASE,
 )
@@ -227,15 +304,87 @@ IP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# ── MRN ─────────────────────────────────────────────────────────────────────
+# ── LABELED IDENTIFIERS ──────────────────────────────────────────────────────
+_IDENTIFIER_VALUE = (
+    r"(?=[A-Z0-9][A-Z0-9\-]{2,31}\b)(?=[A-Z0-9\-]*\d)"
+    r"[A-Z0-9][A-Z0-9\-]{2,31}"
+)
+_LICENSE_VALUE = (
+    r"(?=[A-Z0-9][A-Z0-9\-]{4,19}\b)(?=[A-Z0-9\-]*\d)"
+    r"[A-Z0-9][A-Z0-9\-]{4,19}"
+)
+
+SSN_PATTERN = re.compile(
+    r"""
+    \b(?:
+        (?:S\.?S\.?N\.?|Social\s+Security(?:\s+Number)?)\s*[:#=-]?\s*
+        (?:\d{3}-\d{2}-\d{4}|\d{9})
+        |
+        \d{3}-\d{2}-\d{4}
+    )\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
 MRN_PATTERN = re.compile(
-    r"\b(?:M\.?R\.?N\.?|Medical\s+Record(?:\s+Number)?|Record\s*(?:No\.?|Number)"
-    r"|Patient\s*(?:ID|Identifier)|Hospital\s*ID|UHID)"
-    r"\s*[:#=-]?\s*[A-Z0-9][A-Z0-9\-]{2,}\b",
+    rf"""
+    \b(?:M\.?R\.?N\.?|Medical\s+Record(?:\s+Number)?|Record\s*(?:No\.?|Number)
+    |Patient\s*(?:ID|Identifier)|Hospital\s*ID|UHID)
+    \s*[:#=-]?\s*{_IDENTIFIER_VALUE}\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+ACCOUNT_PATTERN = re.compile(
+    rf"""
+    \b(?:Account\s*(?:No\.?|Number|\#)?|Acct\.?)
+    \s*[:#=-]?\s*{_IDENTIFIER_VALUE}\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+HEALTH_PLAN_PATTERN = re.compile(
+    rf"""
+    \b(?:
+        Health(?:care)?\s*Plan\s*(?:ID|No\.?|Number)?
+        |Insurance\s*(?:ID|Policy(?:\s*(?:No\.?|Number))?)
+        |Policy\s*(?:No\.?|Number)
+        |Member\s*ID
+        |Subscriber\s*ID
+    )
+    \s*[:#=-]?\s*{_IDENTIFIER_VALUE}\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+DEVICE_PATTERN = re.compile(
+    rf"""
+    \b(?:Device\s*(?:ID|Identifier|Serial(?:\s*Number)?)
+    |UDI|Serial\s*(?:No\.?|Number)|S/N|SN|IMEI|MEID)
+    \s*[:#=-]?\s*{_IDENTIFIER_VALUE}\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+LICENSE_PATTERN = re.compile(
+    rf"""
+    \b(?:
+        (?:(?:Driver'?s|Driving)\s+Licen[cs]e|Licen[cs]e|License)
+        (?:\s*(?:No\.?|Number|\#))?
+        \s*[:#=-]?\s*{_LICENSE_VALUE}
+        |(?:DL|LIC|LN)\s*[-:#]?\s*{_LICENSE_VALUE}
+        |[A-Z]{{2}}\d{{2,4}}[A-Z0-9]{{6,12}}
+    )\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+VIN_PATTERN = re.compile(
+    r"\b[A-HJ-NPR-Z0-9]{17}\b",
     re.IGNORECASE,
 )
 
-# ── DATE OF BIRTH ────────────────────────────────────────────────────────────
+# ── DATES / AGES ─────────────────────────────────────────────────────────────
 _MONTH = (
     r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
     r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|"
@@ -243,12 +392,23 @@ _MONTH = (
 )
 DOB_PATTERN = re.compile(
     rf"\b(?:"
-    rf"\d{{1,2}}[/\-]\d{{1,2}}[/\-]\d{{2,4}}"          # 01/15/1990
-    rf"|\d{{4}}[/\-]\d{{1,2}}[/\-]\d{{1,2}}"           # 1990-01-15
-    rf"|{_MONTH}\s+\d{{1,2}},?\s+\d{{4}}"               # January 15, 1990
-    rf"|\d{{1,2}}\s+{_MONTH}\s+\d{{4}}"                 # 15 January 1990
+    rf"\d{{1,2}}[./\-]\d{{1,2}}[./\-]\d{{2,4}}"
+    rf"|\d{{4}}[./\-]\d{{1,2}}[./\-]\d{{1,2}}"
+    rf"|{_MONTH}\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{2,4}}"
+    rf"|\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH}\s+\d{{2,4}}"
     rf")\b",
     re.IGNORECASE,
+)
+
+AGE_PATTERN = re.compile(
+    r"""
+    \b(?:
+        (?:age(?:d)?|patient\s+age)\s*[:#=-]?\s*(?:9\d|1[01]\d|120)
+        |
+        (?:9\d|1[01]\d|120)\s*(?:years?\s*old|y/o|yo)
+    )\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
 )
 
 # ── ADDRESS ──────────────────────────────────────────────────────────────────
@@ -282,6 +442,24 @@ ADDRESS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+LOCATION_PATTERN = re.compile(
+    rf"""
+    \b(?:City|County|Precinct|ZIP(?:\s*Code)?|Postal\s*Code|PIN\s*Code)
+    \s*[:#=-]?\s*(?:{_CITY}|{_POSTAL})\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+_FACILITY_WORD = r"[A-Z][A-Za-z&.'-]*"
+_FACILITY_SUFFIX = (
+    r"(?i:Hospital|Clinic|Medical\s+Center|Health\s+Center|Healthcare\s+Center|"
+    r"Care\s+Center|Nursing\s+Home|Laboratory|Lab|Pharmacy|Hospice|"
+    r"Rehabilitation\s+Center|Rehab\s+Center)"
+)
+FACILITY_PATTERN = re.compile(
+    rf"\b{_FACILITY_WORD}(?:\s+{_FACILITY_WORD}){{0,5}}\s+{_FACILITY_SUFFIX}\b"
+)
+
 # ── URL ──────────────────────────────────────────────────────────────────────
 URL_PATTERN = re.compile(
     r"(?:https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+"
@@ -290,30 +468,32 @@ URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# ── VIN ──────────────────────────────────────────────────────────────────────
-VIN_PATTERN = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b")
-
-# ── DRIVER'S LICENSE / GOVT ID ───────────────────────────────────────────────
-LICENSE_PATTERN = re.compile(
-    r"\b(?:(?:DL|LIC(?:ENSE)?|LN|LICENSE\s*(?:NO\.?|NUMBER)?"
-    r"|DRIVING\s+LICEN[CS]E\s*(?:NO\.?|NUMBER)?)\s*[:#\-]?\s*[A-Z0-9]{6,15}"
-    r"|[A-Z]{2}\d{2,4}[A-Z0-9]{6,12})\b",
-    re.IGNORECASE,
-)
-
 # ---------------------------------------------------------------------------
-# Pattern registry — order matters (URLs before emails to avoid overlaps)
+# Pattern registry — order matters:
+# broad values such as phone numbers run after labeled identifiers.
 # ---------------------------------------------------------------------------
 STRUCTURED_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    ("urls_found",      URL_PATTERN,     URL_REDACTION_TOKEN),
-    ("emails_found",    EMAIL_PATTERN,   EMAIL_REDACTION_TOKEN),
-    ("phones_found",    PHONE_PATTERN,   PHONE_REDACTION_TOKEN),
-    ("ips_found",       IP_PATTERN,      IP_REDACTION_TOKEN),
-    ("mrns_found",      MRN_PATTERN,     MRN_REDACTION_TOKEN),
-    ("dobs_found",      DOB_PATTERN,     DOB_REDACTION_TOKEN),
+    ("urls_found", URL_PATTERN, URL_REDACTION_TOKEN),
+    ("emails_found", EMAIL_PATTERN, EMAIL_REDACTION_TOKEN),
+    ("ssns_found", SSN_PATTERN, SSN_REDACTION_TOKEN),
+    ("mrns_found", MRN_PATTERN, MRN_REDACTION_TOKEN),
+    ("account_numbers_found", ACCOUNT_PATTERN, ACCOUNT_REDACTION_TOKEN),
+    (
+        "health_plan_ids_found",
+        HEALTH_PLAN_PATTERN,
+        HEALTH_PLAN_REDACTION_TOKEN,
+    ),
+    ("device_ids_found", DEVICE_PATTERN, DEVICE_REDACTION_TOKEN),
+    ("licenses_found", LICENSE_PATTERN, LICENSE_REDACTION_TOKEN),
+    ("vins_found", VIN_PATTERN, VIN_REDACTION_TOKEN),
+    ("faxes_found", FAX_PATTERN, FAX_REDACTION_TOKEN),
+    ("phones_found", PHONE_PATTERN, PHONE_REDACTION_TOKEN),
+    ("ips_found", IP_PATTERN, IP_REDACTION_TOKEN),
+    ("dobs_found", DOB_PATTERN, DOB_REDACTION_TOKEN),
+    ("ages_found", AGE_PATTERN, AGE_REDACTION_TOKEN),
     ("addresses_found", ADDRESS_PATTERN, ADDRESS_REDACTION_TOKEN),
-    ("vins_found",      VIN_PATTERN,     VIN_REDACTION_TOKEN),
-    ("licenses_found",  LICENSE_PATTERN, LICENSE_REDACTION_TOKEN),
+    ("locations_found", LOCATION_PATTERN, LOCATION_REDACTION_TOKEN),
+    ("facilities_found", FACILITY_PATTERN, FACILITY_REDACTION_TOKEN),
 )
 
 
@@ -349,18 +529,26 @@ class TextInput(BaseModel):
 
 
 class RedactionResponse(BaseModel):
-    status:           str
-    redacted_text:    str
-    emails_found:     int
-    phones_found:     int
-    ips_found:        int
-    names_found:      int
-    mrns_found:       int
-    dobs_found:       int
-    addresses_found:  int
-    urls_found:       int
-    vins_found:       int
-    licenses_found:   int
+    status: str
+    redacted_text: str
+    emails_found: int
+    phones_found: int
+    faxes_found: int
+    ips_found: int
+    names_found: int
+    mrns_found: int
+    ssns_found: int
+    dobs_found: int
+    ages_found: int
+    addresses_found: int
+    locations_found: int
+    facilities_found: int
+    urls_found: int
+    account_numbers_found: int
+    health_plan_ids_found: int
+    device_ids_found: int
+    vins_found: int
+    licenses_found: int
 
 
 # ---------------------------------------------------------------------------
@@ -376,11 +564,58 @@ def _apply_structured_redactions(text: str) -> tuple[str, dict[str, int]]:
     return redacted_text, counts
 
 
+@lru_cache(maxsize=1)
+def _get_presidio_analyzer() -> AnalyzerEngine | None:
+    if os.getenv("DISABLE_PRESIDIO", "").lower() in {"1", "true", "yes"}:
+        return None
+
+    try:
+        if PRESIDIO_SPACY_MODEL:
+            provider = NlpEngineProvider(
+                nlp_configuration={
+                    "nlp_engine_name": "spacy",
+                    "models": [
+                        {
+                            "lang_code": PRESIDIO_LANGUAGE,
+                            "model_name": PRESIDIO_SPACY_MODEL,
+                        }
+                    ],
+                }
+            )
+            nlp_engine = provider.create_engine()
+            return AnalyzerEngine(
+                nlp_engine=nlp_engine,
+                supported_languages=[PRESIDIO_LANGUAGE],
+                default_score_threshold=PRESIDIO_PERSON_THRESHOLD,
+            )
+
+        return AnalyzerEngine(
+            supported_languages=[PRESIDIO_LANGUAGE],
+            default_score_threshold=PRESIDIO_PERSON_THRESHOLD,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Presidio AnalyzerEngine unavailable; continuing without PERSON fallback: %s",
+            exc,
+        )
+        return None
+
+
 def _presidio_person_entities(text: str) -> list[NameEntity]:
+    analyzer = _get_presidio_analyzer()
     if analyzer is None:
         return []
 
-    results = analyzer.analyze(text=text, entities=["PERSON"], language="en")
+    try:
+        results = analyzer.analyze(
+            text=text,
+            entities=["PERSON"],
+            language=PRESIDIO_LANGUAGE,
+        )
+    except Exception as exc:
+        logger.warning("Presidio PERSON analysis failed; skipping fallback: %s", exc)
+        return []
+
     entities: list[NameEntity] = []
 
     for result in results:
@@ -449,21 +684,23 @@ def health(request: Request):
     },
 )
 @limiter.limit("10/minute")
-def redact(request: Request, data: TextInput):
+def redact(
+    request: Request,
+    data: TextInput,
+    _: None = Depends(require_api_key),
+):
     """
     Detect and redact PHI/PII entities from clinical text.
 
     **Redaction order:**
     1. URLs (before email to avoid partial overlaps)
     2. Emails
-    3. Phone numbers
-    4. IP addresses
-    5. MRNs
-    6. Dates of birth
-    7. Street addresses
-    8. VINs
-    9. License numbers
-    10. Names — transformer NER + title/context rules + Presidio
+    3. SSNs and labeled identifiers (MRN, account, health plan, device IDs)
+    4. License numbers and VINs
+    5. Fax and phone numbers
+    6. IP addresses
+    7. Dates, ages over 89, addresses, locations, and facilities
+    8. Names — transformer NER + title/context rules + Presidio
 
     **Rate limit:** 10 requests/minute per IP.
     """
@@ -471,16 +708,24 @@ def redact(request: Request, data: TextInput):
     redacted_text, name_count = redact_names(structured_text)
 
     return {
-        "status":          "success",
-        "redacted_text":   redacted_text,
-        "emails_found":    counts["emails_found"],
-        "phones_found":    counts["phones_found"],
-        "ips_found":       counts["ips_found"],
-        "names_found":     name_count,
-        "mrns_found":      counts["mrns_found"],
-        "dobs_found":      counts["dobs_found"],
+        "status": "success",
+        "redacted_text": redacted_text,
+        "emails_found": counts["emails_found"],
+        "phones_found": counts["phones_found"],
+        "faxes_found": counts["faxes_found"],
+        "ips_found": counts["ips_found"],
+        "names_found": name_count,
+        "mrns_found": counts["mrns_found"],
+        "ssns_found": counts["ssns_found"],
+        "dobs_found": counts["dobs_found"],
+        "ages_found": counts["ages_found"],
         "addresses_found": counts["addresses_found"],
-        "urls_found":      counts["urls_found"],
-        "vins_found":      counts["vins_found"],
-        "licenses_found":  counts["licenses_found"],
+        "locations_found": counts["locations_found"],
+        "facilities_found": counts["facilities_found"],
+        "urls_found": counts["urls_found"],
+        "account_numbers_found": counts["account_numbers_found"],
+        "health_plan_ids_found": counts["health_plan_ids_found"],
+        "device_ids_found": counts["device_ids_found"],
+        "vins_found": counts["vins_found"],
+        "licenses_found": counts["licenses_found"],
     }
