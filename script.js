@@ -1,311 +1,332 @@
+/*
+=======================================================================
+  PHI / PII REDACTION TOOL — JAVASCRIPT
+  Connects the frontend UI to the live FastAPI backend.
+
+  Backend must be running at API_BASE_URL (default http://127.0.0.1:8000)
+  Start it with: cd backend && uvicorn main:app --reload --port 8000
+=======================================================================
+*/
+
 let originalText = "";
 let redactedText = "";
-let isShowingOriginal = false;
 let lastEntities = [];
-let requestStartTime = 0;
-const sampleNotes = {
-  "1": `Patient: John Smith
-Date of Birth: 12/05/1985
-MRN: MRN-100234
-Phone: +1-555-123-4567
-Email: john.smith@email.com
-Address: 45 Oak Street, Boston MA 02101
+let isShowingOriginal = false;
 
-Chief Complaint: Patient reports persistent chest pain for the last 3 days.
-History: Diagnosed with Parkinson's disease in 2019.
-Current Medications: Levodopa 100mg three times daily.
-Attending Physician: Dr. Sarah Adams`,
+// Backend URL — change this if your backend runs elsewhere
+const API_BASE_URL = "http://127.0.0.1:8000";
 
-  "2": `Prescription Record
-Patient Name: Emily Johnson
-Date of Birth: 03/22/1990
-MRN: MRN-200456
-Contact: emily.johnson@gmail.com | 617-555-8899
+// Pre-filled demo clinical notes (fake data only — never use real PHI here)
+const SAMPLE_NOTES = {
+  "1":
+    "Patient John Smith, DOB 12/05/1985, MRN 100234, called on 555-123-4567. " +
+    "Email: john.smith@email.com. Address: 45 Oak Street, Boston MA 02101. " +
+    "Diagnosed with Parkinson's disease in 2019.",
 
-Prescribing Doctor: Dr. Michael Chen
-License No: MD-78234
-Date: 06/01/2026
+  "2":
+    "Prescription for Emily Johnson, DOB 03/22/1990, MRN-200456. " +
+    "Doctor: Dr. Robert Chen. Date: 06/01/2026. " +
+    "Contact: emily.johnson@gmail.com | 617-555-8899.",
 
-Medication: Metformin 500mg
-Dosage: Twice daily with meals
-Refills: 3
-Pharmacy: CVS Boston, 120 Tremont St`,
-
-  "3": `Dear Dr. Williams,
-
-I am writing to refer Mr. David Lee (DOB: 07/14/1975, MRN: MRN-300789).
-Mr. Lee resides at 88 Pine Avenue, Chicago IL 60601.
-He can be reached at david.lee@hospital.org or 312-555-6677.
-
-Reason for Referral: Mr. Lee presents with symptoms consistent with
-Type 2 Diabetes Mellitus. His HbA1c reading of 8.2% is above normal range.
-He has no known drug allergies.
-
-Please contact my office at 312-555-1100 for additional records.
-
-Sincerely,
-Dr. Rachel Torres
-Chicago Medical Center`
+  "3":
+    "Dear Dr. Patricia Williams, I am referring Mr. David Lee, born 07/14/1975, " +
+    "MRN 300789, residing at 88 Pine Avenue, Chicago IL 60601. " +
+    "Contact: david.lee@hospital.org | 312-555-6677."
 };
+
 
 document.addEventListener("DOMContentLoaded", function () {
 
-  document.getElementById("inputText").addEventListener("input", function () {
-    const length = this.value.length;
-    const counter = document.getElementById("charCount");
-    counter.textContent = length + " / 5000 characters";
-    if (length > 4500) {
-      counter.style.color = "#dc3545";  
-    } else if (length > 4000) {
-      counter.style.color = "#fd7e14";  
-    } else {
-      counter.style.color = "#6c757d";  
-    }
+  const inputTextarea = document.getElementById("inputText");
+  const charCountEl = document.getElementById("charCount");
+
+  // -- Character counter --
+  inputTextarea.addEventListener("input", function () {
+    const len = this.value.length;
+    charCountEl.textContent = len + " / 5000";
+    charCountEl.style.color = len > 4500 ? "#dc3545" : "#6c757d";
   });
 
+  // -- Clear button --
   document.getElementById("clearBtn").addEventListener("click", function () {
-    document.getElementById("inputText").value = "";
-    document.getElementById("charCount").textContent = "0 / 5000 characters";
-    document.getElementById("charCount").style.color = "#6c757d";
+    inputTextarea.value = "";
+    charCountEl.textContent = "0 / 5000";
+    charCountEl.style.color = "#6c757d";
+
     document.getElementById("resultCard").innerHTML =
       '<span class="text-muted" id="placeholderText">Results will appear here after you click <strong>Redact PHI</strong>.</span>';
-
+    document.getElementById("resultCard").classList.remove("has-result");
     document.getElementById("resultActions").style.display = "none";
     document.getElementById("statsBar").style.display = "none";
-    document.getElementById("entityBreakdown").style.display = "none";
-
+    document.getElementById("entityLegend").style.display = "none";
     hideError();
 
     originalText = "";
     redactedText = "";
-    isShowingOriginal = false;
     lastEntities = [];
-
-    document.getElementById("restoreBtn").textContent = "Show Original";
+    isShowingOriginal = false;
+    document.getElementById("restoreBtn").textContent = "Show Original Text";
   });
 
-  document.getElementById("copyBtn").addEventListener("click", function () {
-    const text = document.getElementById("resultCard").innerText;
-
-    navigator.clipboard.writeText(text).then(function () {
-      const btn = document.getElementById("copyBtn");
-      btn.textContent = "Copied!";
-      btn.classList.add("btn-success");
-      btn.classList.remove("btn-outline-primary");
-
-      setTimeout(function () {
-        btn.textContent = "Copy Text";
-        btn.classList.remove("btn-success");
-        btn.classList.add("btn-outline-primary");
-      }, 2000);
-    }).catch(function () {
-      showError("Could not copy to clipboard. Please select and copy manually.");
-    });
-  });
-
-  document.getElementById("downloadBtn").addEventListener("click", function () {
-    const text = document.getElementById("resultCard").innerText;
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "redacted_output.txt";
-    document.body.appendChild(a);
-    a.click();
-
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  });
-
-  document.querySelectorAll(".sample-btn").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      const sampleKey = this.getAttribute("data-sample");
-      document.getElementById("inputText").value = sampleNotes[sampleKey];
-
-      const length = sampleNotes[sampleKey].length;
-      document.getElementById("charCount").textContent = length + " / 5000 characters";
-    });
-  });
-
+  // -- Redact button: main API call --
   document.getElementById("redactBtn").addEventListener("click", async function () {
-    const inputText = document.getElementById("inputText").value.trim();
+
+    const inputText = inputTextarea.value.trim();
 
     if (inputText === "") {
       showError("Please enter some clinical text before clicking Redact PHI.");
+      inputTextarea.focus();
       return;
     }
-
     if (inputText.length > 5000) {
-      showError("Text is too long. Maximum is 5000 characters. Please shorten your input.");
+      showError("Text is too long. Please enter less than 5000 characters.");
       return;
     }
 
+    document.getElementById("loadingMsg").style.display = "flex";
+    document.getElementById("redactBtn").disabled = true;
+    document.getElementById("resultCard").innerHTML =
+      '<span class="text-muted">Analyzing text and detecting PHI entities...</span>';
+    document.getElementById("resultActions").style.display = "none";
+    document.getElementById("statsBar").style.display = "none";
+    document.getElementById("entityLegend").style.display = "none";
     hideError();
 
     originalText = inputText;
     isShowingOriginal = false;
-    document.getElementById("restoreBtn").textContent = "Show Original";
-
-    document.getElementById("loadingMsg").classList.add("show-flex");
-    document.getElementById("redactBtn").disabled = true;
-    document.getElementById("redactBtn").textContent = "Processing...";
-
-    requestStartTime = Date.now();
-
-    document.getElementById("resultCard").innerHTML =
-      '<span class="text-muted">Detecting PHI entities...</span>';
-    document.getElementById("resultActions").style.display = "none";
-    document.getElementById("statsBar").style.display = "none";
-    document.getElementById("entityBreakdown").style.display = "none";
+    document.getElementById("restoreBtn").textContent = "Show Original Text";
 
     try {
-      const response = await fetch("http://localhost:8000/redact", {
+      const response = await fetch(API_BASE_URL + "/redact", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: inputText })
       });
 
       if (!response.ok) {
-        throw new Error("Server returned status " + response.status);
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || ("Server error " + response.status));
       }
 
       const data = await response.json();
-
-      redactedText = data.redacted_text;
+      redactedText = data.redacted_text || "";
       lastEntities = data.entities || [];
 
       renderRedactedHTML(redactedText, lastEntities);
-
+      updateEntityCounts(lastEntities);
       updateStatsBar(lastEntities);
 
-      updateEntityBreakdown(lastEntities);
-
-      document.getElementById("resultActions").classList.add("show-flex");
-
-      const elapsed = ((Date.now() - requestStartTime) / 1000).toFixed(2);
-      document.getElementById("processingTime").textContent = "(" + elapsed + "s)";
+      document.getElementById("resultActions").style.display = "flex";
 
     } catch (error) {
-      console.error("API Error:", error);
+      console.error("Redact API Error:", error);
 
-      document.getElementById("resultCard").innerHTML =
-        '<span class="text-danger" style="font-size:13px;">' +
-        '<strong>Connection Error:</strong> Could not reach the backend server. ' +
-        'Make sure the FastAPI server (Member 1) is running on http://localhost:8000' +
-        '</span>';
-
-      showError("Backend not reachable. Start the FastAPI server with: uvicorn main:app --reload --port 8000");
+      if (error.message.includes("Failed to fetch") || error.message.includes("NetworkError")) {
+        showError(
+          "Cannot connect to backend. Make sure the FastAPI server is running: " +
+          "cd backend and run uvicorn main:app --reload --port 8000"
+        );
+        document.getElementById("resultCard").innerHTML =
+          '<span class="text-danger"><strong>Connection failed.</strong> Backend API is not reachable at ' +
+          API_BASE_URL + '<br><small class="text-muted">Start it with: ' +
+          '<code>uvicorn main:app --reload --port 8000</code></small></span>';
+      } else {
+        showError("Error: " + error.message);
+        document.getElementById("resultCard").innerHTML =
+          '<span class="text-danger">An error occurred. See the message above.</span>';
+      }
     }
 
-    document.getElementById("loadingMsg").classList.remove("show-flex");
+    document.getElementById("loadingMsg").style.display = "none";
     document.getElementById("redactBtn").disabled = false;
-    document.getElementById("redactBtn").textContent = "Redact PHI";
   });
 
+  // -- Restore button: toggle redacted/original via /restore API --
   document.getElementById("restoreBtn").addEventListener("click", async function () {
+
     if (isShowingOriginal) {
       renderRedactedHTML(redactedText, lastEntities);
-      this.textContent = "Show Original";
+      this.textContent = "Show Original Text";
       isShowingOriginal = false;
       return;
     }
 
     try {
-      const response = await fetch("http://localhost:8000/restore", {
+      this.textContent = "Restoring...";
+      this.disabled = true;
+
+      const response = await fetch(API_BASE_URL + "/restore", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ redacted_text: redactedText })
       });
 
-      if (!response.ok) {
-        throw new Error("Restore failed with status " + response.status);
-      }
+      if (!response.ok) throw new Error("Restore failed: " + response.status);
 
       const data = await response.json();
-
       document.getElementById("resultCard").innerText = data.original_text;
+      document.getElementById("resultCard").classList.remove("has-result");
 
-      this.textContent = "Show Redacted";
+      this.textContent = "Show Redacted Text";
       isShowingOriginal = true;
 
     } catch (error) {
-      console.error("Restore Error:", error);
+      console.warn("Restore API failed, using local copy:", error);
       document.getElementById("resultCard").innerText = originalText;
-      this.textContent = "Show Redacted";
+      this.textContent = "Show Redacted Text";
       isShowingOriginal = true;
     }
+
+    this.disabled = false;
+  });
+
+  // -- Copy button --
+  document.getElementById("copyBtn").addEventListener("click", function () {
+    const text = document.getElementById("resultCard").innerText;
+    navigator.clipboard.writeText(text).then(function () {
+      const btn = document.getElementById("copyBtn");
+      const original = btn.textContent;
+      btn.textContent = "Copied!";
+      btn.classList.add("btn-success");
+      btn.classList.remove("btn-outline-primary");
+      setTimeout(function () {
+        btn.textContent = original;
+        btn.classList.remove("btn-success");
+        btn.classList.add("btn-outline-primary");
+      }, 2000);
+    }).catch(function () {
+      showError("Could not copy - please select the text manually and copy with Ctrl+C.");
+    });
+  });
+
+  // -- Download button --
+  document.getElementById("downloadBtn").addEventListener("click", function () {
+    const text = document.getElementById("resultCard").innerText;
+    const timestamp = new Date().toLocaleString();
+    const fileContent =
+      "PHI/PII REDACTED CLINICAL NOTE\n" +
+      "Generated by: PHI Redaction Tool\n" +
+      "Timestamp: " + timestamp + "\n" +
+      "-----------------------------------------------\n\n" + text;
+
+    const blob = new Blob([fileContent], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "redacted_output_" + Date.now() + ".txt";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  });
+
+  // -- Sample note buttons --
+  document.querySelectorAll(".sample-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      const sampleNumber = this.getAttribute("data-sample");
+      const sampleText = SAMPLE_NOTES[sampleNumber];
+      if (sampleText) {
+        inputTextarea.value = sampleText;
+        charCountEl.textContent = sampleText.length + " / 5000";
+        charCountEl.style.color = "#6c757d";
+        inputTextarea.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    });
   });
 
 });
 
+
+// -- renderRedactedHTML: shows colored badges for each entity --
 function renderRedactedHTML(text, entities) {
   if (!entities || entities.length === 0) {
     document.getElementById("resultCard").innerText = text;
+    document.getElementById("resultCard").classList.remove("has-result");
     return;
   }
 
-  let displayHTML = escapeHTML(text);
+  let displayText = escapeHTML(text);
 
-  entities.forEach(function (entity) {
-    const placeholder = entity.replacement;
-    const label = entity.label;
+  // Replace longest tokens first to avoid partial overlaps
+  const sorted = [...entities].sort(
+    (a, b) => (b.replacement || "").length - (a.replacement || "").length
+  );
+
+  sorted.forEach(function (entity) {
+    const placeholder = entity.replacement || "";
+    const label = entity.label || "OTHER";
+    const original = entity.text || "";
+    if (!placeholder) return;
 
     const badge =
       '<span class="redacted-token entity-' + label + '" ' +
-      'title="Original: ' + escapeHTML(entity.text || '') + '">' +
+      'title="Original: ' + escapeHTML(original) + ' (' + label + ')">' +
       '[' + label + ']' +
       '</span>';
 
-    const escapedPlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    displayHTML = displayHTML.replace(new RegExp(escapedPlaceholder, 'g'), badge);
+    displayText = displayText.split(placeholder).join(badge);
   });
 
-  document.getElementById("resultCard").innerHTML = displayHTML;
+  displayText = displayText.replace(/\n/g, "<br>");
+  document.getElementById("resultCard").innerHTML = displayText;
+  document.getElementById("resultCard").classList.add("has-result");
 }
 
-function updateStatsBar(entities) {
-  const total = entities ? entities.length : 0;
-  document.getElementById("totalCount").textContent = total;
-  document.getElementById("statsBar").classList.add("show-block");
-}
 
-function updateEntityBreakdown(entities) {
-  if (!entities || entities.length === 0) return;
+// -- updateEntityCounts: fills entity legend with counts --
+function updateEntityCounts(entities) {
+  if (!entities || entities.length === 0) {
+    document.getElementById("entityLegend").style.display = "none";
+    return;
+  }
 
   const counts = {};
   entities.forEach(function (entity) {
-    const label = entity.label;
+    const label = entity.label || "OTHER";
     counts[label] = (counts[label] || 0) + 1;
   });
 
   let html = "";
   for (const label in counts) {
-    html +=
-      '<span class="redacted-token entity-' + label + '">' +
-      label + ': ' + counts[label] +
-      '</span>';
+    html += '<span class="redacted-token entity-' + label + '">' +
+      label + ': ' + counts[label] + '</span>';
   }
 
   document.getElementById("entityCounts").innerHTML = html;
-  document.getElementById("entityBreakdown").style.display = "block";
+  document.getElementById("entityLegend").style.display = "block";
 }
 
+
+// -- updateStatsBar: total entity count summary --
+function updateStatsBar(entities) {
+  const total = entities ? entities.length : 0;
+  document.getElementById("totalCount").textContent = total;
+  document.getElementById("statsBar").style.display = total > 0 ? "block" : "none";
+}
+
+
+// -- showError / hideError --
 function showError(message) {
   const banner = document.getElementById("errorBanner");
-  document.getElementById("errorMessage").textContent = message;
-  banner.classList.add("show-block");
+  const msgSpan = document.getElementById("errorMessage");
+  msgSpan.textContent = message;
+  banner.style.display = "flex";
+  clearTimeout(window._errorTimeout);
+  window._errorTimeout = setTimeout(hideError, 8000);
 }
 
 function hideError() {
-  document.getElementById("errorBanner").classList.remove("show-block");
   document.getElementById("errorBanner").style.display = "none";
 }
 
+
+// -- escapeHTML: prevents HTML injection from clinical text --
 function escapeHTML(text) {
-  const div = document.createElement("div");
-  div.appendChild(document.createTextNode(text));
-  return div.innerHTML;
+  if (!text) return "";
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
