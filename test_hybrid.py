@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from backend.main import _apply_structured_redactions, redact_names
+from backend.main import (
+    Pseudonymizer,
+    _apply_structured_redactions,
+    redact_names,
+    restore_pseudonymized_text,
+)
+from backend.mapping_store import create_session, delete_session, get_mapping
 
 
 SAMPLE_TEXT = (
@@ -10,8 +16,23 @@ SAMPLE_TEXT = (
 
 
 if __name__ == "__main__":
-    structured_text, counts = _apply_structured_redactions(SAMPLE_TEXT)
-    redacted_text, names_found = redact_names(structured_text)
+    session_id = create_session()
+    pseudonymizer = Pseudonymizer(session_id=session_id)
 
-    print(redacted_text)
-    print({**counts, "names_found": names_found})
+    try:
+        structured_text, counts = _apply_structured_redactions(
+            SAMPLE_TEXT,
+            pseudonymizer=pseudonymizer,
+        )
+        redacted_text, names_found = redact_names(
+            structured_text,
+            pseudonymizer=pseudonymizer,
+        )
+        restored_text = restore_pseudonymized_text(redacted_text, get_mapping(session_id) or {})
+
+        print(session_id)
+        print(redacted_text)
+        print(restored_text)
+        print({**counts, "names_found": names_found})
+    finally:
+        delete_session(session_id)

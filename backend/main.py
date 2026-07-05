@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import secrets
+from collections import defaultdict
 from functools import lru_cache
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
@@ -17,10 +18,13 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+try:
+    from .mapping_store import create_session, delete_session, get_mapping, store_mapping
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from mapping_store import create_session, delete_session, get_mapping, store_mapping
+
 from transformer_ner import (
-    NAME_REDACTION_TOKEN,
     NameEntity,
-    build_redacted_text,
     detect_name_entities,
     post_process_name_entities,
 )
@@ -84,7 +88,7 @@ def _cors_origins() -> list[str]:
 
 
 app = FastAPI(
-    title="PHI/PII Redaction API",
+    title="PHI/PII Pseudonymization API",
     description="""
 Healthcare PHI/PII Redaction Service for HIPAA de-identification workflows.
 Deployment compliance still requires access controls, audit controls,
@@ -130,7 +134,7 @@ certificate/license numbers, VINs, device identifiers, URLs, IP addresses,
 facilities, and other labeled unique identifiers. Biometric identifiers and
 full-face photographs are out of scope for this text API.
 """,
-    version="1.3.0",
+    version="1.4.0",
 )
 
 app.state.limiter = limiter
@@ -496,6 +500,49 @@ STRUCTURED_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("facilities_found", FACILITY_PATTERN, FACILITY_REDACTION_TOKEN),
 )
 
+REDACTION_TOKEN_ENTITY_TYPES: dict[str, str] = {
+    URL_REDACTION_TOKEN: "URL",
+    EMAIL_REDACTION_TOKEN: "EMAIL",
+    SSN_REDACTION_TOKEN: "SSN",
+    MRN_REDACTION_TOKEN: "MRN",
+    ACCOUNT_REDACTION_TOKEN: "ACCOUNT",
+    HEALTH_PLAN_REDACTION_TOKEN: "HEALTH_PLAN",
+    DEVICE_REDACTION_TOKEN: "DEVICE",
+    LICENSE_REDACTION_TOKEN: "LICENSE",
+    VIN_REDACTION_TOKEN: "VIN",
+    FAX_REDACTION_TOKEN: "FAX",
+    PHONE_REDACTION_TOKEN: "PHONE",
+    IP_REDACTION_TOKEN: "IP",
+    DOB_REDACTION_TOKEN: "DOB",
+    AGE_REDACTION_TOKEN: "AGE",
+    ADDRESS_REDACTION_TOKEN: "ADDRESS",
+    LOCATION_REDACTION_TOKEN: "LOCATION",
+    FACILITY_REDACTION_TOKEN: "FACILITY",
+}
+
+PSEUDONYM_TOKEN_PATTERN = re.compile(r"\[([A-Z][A-Z_]*_\d{3})\]")
+
+
+class Pseudonymizer:
+    """Generate deterministic placeholders for one redaction request."""
+
+    def __init__(self, session_id: str | None = None) -> None:
+        self.session_id = session_id
+        self._counters: defaultdict[str, int] = defaultdict(int)
+        self._placeholder_by_value: dict[tuple[str, str], str] = {}
+
+    def pseudonym_for(self, entity_type: str, original_value: str) -> str:
+        lookup_key = (entity_type, original_value)
+        placeholder = self._placeholder_by_value.get(lookup_key)
+        if placeholder is None:
+            self._counters[entity_type] += 1
+            placeholder = f"{entity_type}_{self._counters[entity_type]:03d}"
+            self._placeholder_by_value[lookup_key] = placeholder
+            if self.session_id is not None:
+                store_mapping(self.session_id, placeholder, original_value)
+
+        return f"[{placeholder}]"
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -528,8 +575,37 @@ class TextInput(BaseModel):
         return value
 
 
+class RestoreInput(BaseModel):
+    session_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        description="UUID returned by POST /redact",
+    )
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_TEXT_LENGTH,
+        description="Pseudonymized text containing placeholders to restore",
+    )
+
+    @field_validator("session_id")
+    @classmethod
+    def sanitize_session_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("session_id cannot be empty")
+        return value
+
+    @field_validator("text")
+    @classmethod
+    def sanitize_text(cls, value: str) -> str:
+        return TextInput.sanitize_text(value)
+
+
 class RedactionResponse(BaseModel):
     status: str
+    session_id: str
     redacted_text: str
     emails_found: int
     phones_found: int
@@ -551,17 +627,62 @@ class RedactionResponse(BaseModel):
     licenses_found: int
 
 
+class RestoreResponse(BaseModel):
+    status: str
+    text: str
+
+
 # ---------------------------------------------------------------------------
 # Core redaction helpers
 # ---------------------------------------------------------------------------
 
-def _apply_structured_redactions(text: str) -> tuple[str, dict[str, int]]:
+def _apply_structured_redactions(
+    text: str,
+    pseudonymizer: Pseudonymizer | None = None,
+) -> tuple[str, dict[str, int]]:
     counts: dict[str, int] = {}
     redacted_text = text
+    request_pseudonymizer = pseudonymizer or Pseudonymizer()
     for key, pattern, replacement in STRUCTURED_PATTERNS:
-        redacted_text, n = pattern.subn(replacement, redacted_text)
+        entity_type = REDACTION_TOKEN_ENTITY_TYPES[replacement]
+        redacted_text, n = pattern.subn(
+            lambda match, entity_type=entity_type: request_pseudonymizer.pseudonym_for(
+                entity_type,
+                match.group(0),
+            ),
+            redacted_text,
+        )
         counts[key] = n
     return redacted_text, counts
+
+
+def restore_pseudonymized_text(text: str, mapping: dict[str, str]) -> str:
+    return PSEUDONYM_TOKEN_PATTERN.sub(
+        lambda match: mapping.get(match.group(1), match.group(0)),
+        text,
+    )
+
+
+def _apply_name_pseudonyms(
+    text: str,
+    entities: list[NameEntity],
+    pseudonymizer: Pseudonymizer,
+) -> str:
+    pseudonymized_text = text
+    entity_replacements = []
+    for entity in sorted(entities, key=lambda item: (item.start, item.end)):
+        original_value = text[entity.start : entity.end]
+        entity_replacements.append(
+            (entity, pseudonymizer.pseudonym_for("NAME", original_value))
+        )
+
+    for entity, replacement in reversed(entity_replacements):
+        pseudonymized_text = (
+            pseudonymized_text[: entity.start]
+            + replacement
+            + pseudonymized_text[entity.end :]
+        )
+    return pseudonymized_text
 
 
 @lru_cache(maxsize=1)
@@ -634,9 +755,12 @@ def _presidio_person_entities(text: str) -> list[NameEntity]:
     return entities
 
 
-def redact_names(text: str) -> tuple[str, int]:
+def redact_names(
+    text: str,
+    pseudonymizer: Pseudonymizer | None = None,
+) -> tuple[str, int]:
     """
-    Redact names using a true hybrid detector:
+    Pseudonymize names using a true hybrid detector:
     transformer NER + title/context rules + Presidio PERSON entities.
     """
     candidates: list[NameEntity] = []
@@ -648,7 +772,7 @@ def redact_names(text: str) -> tuple[str, int]:
         return text, 0
 
     return (
-        build_redacted_text(text, final_entities, replacement=NAME_REDACTION_TOKEN),
+        _apply_name_pseudonyms(text, final_entities, pseudonymizer or Pseudonymizer()),
         len(final_entities),
     )
 
@@ -674,10 +798,10 @@ def health(request: Request):
 @app.post(
     "/redact",
     response_model=RedactionResponse,
-    summary="Redact PHI/PII from clinical text",
+    summary="Pseudonymize PHI/PII from clinical text",
     tags=["Redaction"],
     responses={
-        200: {"description": "Successfully redacted text with entity counts"},
+        200: {"description": "Successfully pseudonymized text with entity counts"},
         422: {"description": "Validation error — text empty or exceeds length limit"},
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
@@ -690,9 +814,9 @@ def redact(
     _: None = Depends(require_api_key),
 ):
     """
-    Detect and redact PHI/PII entities from clinical text.
+    Detect and pseudonymize PHI/PII entities from clinical text.
 
-    **Redaction order:**
+    **Pseudonymization order:**
     1. URLs (before email to avoid partial overlaps)
     2. Emails
     3. SSNs and labeled identifiers (MRN, account, health plan, device IDs)
@@ -704,11 +828,25 @@ def redact(
 
     **Rate limit:** 10 requests/minute per IP.
     """
-    structured_text, counts = _apply_structured_redactions(data.text)
-    redacted_text, name_count = redact_names(structured_text)
+    session_id = create_session()
+    pseudonymizer = Pseudonymizer(session_id=session_id)
+
+    try:
+        structured_text, counts = _apply_structured_redactions(
+            data.text,
+            pseudonymizer=pseudonymizer,
+        )
+        redacted_text, name_count = redact_names(
+            structured_text,
+            pseudonymizer=pseudonymizer,
+        )
+    except Exception:
+        delete_session(session_id)
+        raise
 
     return {
         "status": "success",
+        "session_id": session_id,
         "redacted_text": redacted_text,
         "emails_found": counts["emails_found"],
         "phones_found": counts["phones_found"],
@@ -728,4 +866,42 @@ def redact(
         "device_ids_found": counts["device_ids_found"],
         "vins_found": counts["vins_found"],
         "licenses_found": counts["licenses_found"],
+    }
+
+
+@app.post(
+    "/restore",
+    response_model=RestoreResponse,
+    summary="Restore pseudonymized PHI/PII for an active session",
+    tags=["Restoration"],
+    responses={
+        200: {"description": "Successfully restored text for an active session"},
+        404: {"description": "Session not found or expired"},
+        422: {"description": "Validation error - text empty or exceeds length limit"},
+        429: {"description": "Rate limit exceeded"},
+        500: {"description": "Internal server error"},
+    },
+)
+@limiter.limit("10/minute")
+def restore(
+    request: Request,
+    data: RestoreInput,
+    _: None = Depends(require_api_key),
+):
+    """
+    Restore pseudonym placeholders using server-side mappings for an active session.
+
+    Mappings are never returned by this endpoint. Unknown placeholders remain
+    unchanged so callers can safely restore partial snippets from a session.
+    """
+    mapping = get_mapping(data.session_id)
+    if mapping is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or expired",
+        )
+
+    return {
+        "status": "success",
+        "text": restore_pseudonymized_text(data.text, mapping),
     }

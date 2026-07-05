@@ -10,11 +10,15 @@ Covers:
 """
 from __future__ import annotations
 import re
+import time
 from collections import Counter
 from dataclasses import dataclass
+from uuid import UUID, uuid4
 
 
 try:
+    from fastapi.testclient import TestClient
+
     from backend.main import (
         ACCOUNT_PATTERN,
         ADDRESS_PATTERN,
@@ -35,8 +39,10 @@ try:
         VIN_PATTERN,
         TextInput,
         _apply_structured_redactions,
+        app,
         redact_names,
     )
+    from backend.mapping_store import create_session, delete_session, store_mapping
     from transformer_ner import (
         NameEntity,
         _merge_adjacent,
@@ -374,7 +380,19 @@ REGEX_TEST_CASES: list[tuple[str, str, str]] = [
 # ---------------------------------------------------------------------------
 
 def redact_markers_in(text: str) -> list[str]:
-    return re.findall(r"\[[A-Z_]+REDACTED\]", text)
+    return re.findall(r"\[(?:[A-Z_]+REDACTED|[A-Z][A-Z_]*_\d{3})\]", text)
+
+
+def expected_pseudonymized_output(expected: str) -> str:
+    """Convert legacy test markers to deterministic pseudonym placeholders."""
+    counters: Counter[str] = Counter()
+
+    def replace_marker(match: re.Match[str]) -> str:
+        entity_type = match.group(1)
+        counters[entity_type] += 1
+        return f"[{entity_type}_{counters[entity_type]:03d}]"
+
+    return re.sub(r"\[([A-Z_]+)_REDACTED\]", replace_marker, expected)
 
 
 def compare_redaction(actual: str, expected: str) -> EvalResult:
@@ -417,10 +435,11 @@ def run_name_tests() -> EvalResult:
 
         try:
             actual_text, name_count = redact_for_evaluation(case.input_text)
-            result = compare_redaction(actual_text, case.expected_output)
+            expected_output = expected_pseudonymized_output(case.expected_output)
+            result = compare_redaction(actual_text, expected_output)
             total += result
 
-            passed = actual_text == case.expected_output
+            passed = actual_text == expected_output
             if case.expected_name_count is not None and name_count != case.expected_name_count:
                 passed = False
 
@@ -428,7 +447,7 @@ def run_name_tests() -> EvalResult:
             print(f"  [{case.category:<18}] {case.name:<38} {status}")
             if not passed:
                 print(f"      input:    {case.input_text}")
-                print(f"      expected: {case.expected_output}")
+                print(f"      expected: {expected_output}")
                 print(f"      actual:   {actual_text}")
                 if case.expected_name_count is not None:
                     print(f"      expected names: {case.expected_name_count}, actual names: {name_count}")
@@ -597,6 +616,7 @@ def run_structured_redaction_integration_tests() -> EvalResult:
     for label, input_text, expected_token in cases:
         try:
             redacted, _counts = _apply_structured_redactions(input_text)
+            expected_token = expected_pseudonymized_output(expected_token)
             found = expected_token in redacted
             status = PASS if found else FAIL
             if found:
@@ -614,13 +634,108 @@ def run_structured_redaction_integration_tests() -> EvalResult:
     return total
 
 
+def run_pseudonymization_api_tests() -> EvalResult:
+    """API tests for reversible pseudonymization and session handling."""
+    print("\n" + "=" * 72)
+    print("REVERSIBLE PSEUDONYMIZATION API TESTS")
+    print("=" * 72)
+
+    if not MODULES_AVAILABLE:
+        print(f"Modules unavailable: {IMPORT_ERROR}")
+        return EvalResult()
+
+    client = TestClient(app)
+    total = EvalResult()
+
+    def check(label: str, condition: bool, detail: str = "") -> None:
+        status = PASS if condition else FAIL
+        print(f"  {label:<42} {status}")
+        if condition:
+            total.tp += 1
+        else:
+            total.fn += 1
+            if detail:
+                print(f"      {detail}")
+
+    input_text = (
+        "Patient John Smith was admitted. Patient John Smith returned. "
+        "Dr. Jane Doe reviewed the case. "
+        "Phone: +91 98765 43210. Alternate phone: 415-555-0192. "
+        "Email: john@example.com; Backup email: jane@example.org"
+    )
+
+    session_id = ""
+    try:
+        redact_response = client.post("/redact", json={"text": input_text})
+        check("redact endpoint status", redact_response.status_code == 200, redact_response.text)
+        if redact_response.status_code != 200:
+            return total
+
+        payload = redact_response.json()
+        session_id = payload.get("session_id", "")
+        redacted_text = payload.get("redacted_text", "")
+
+        try:
+            UUID(session_id)
+            valid_uuid = True
+        except ValueError:
+            valid_uuid = False
+
+        check("session id is random UUID format", valid_uuid, repr(session_id))
+        check("mappings are not returned", "mapping" not in payload and "mappings" not in payload)
+        check("multiple names get per-type counters", "[NAME_001]" in redacted_text and "[NAME_002]" in redacted_text, redacted_text)
+        check("duplicate names reuse placeholder", redacted_text.count("[NAME_001]") == 2, redacted_text)
+        check("multiple phones get phone counters", "[PHONE_001]" in redacted_text and "[PHONE_002]" in redacted_text, redacted_text)
+        check("multiple emails get email counters", "[EMAIL_001]" in redacted_text and "[EMAIL_002]" in redacted_text, redacted_text)
+        check("entity counts preserved", payload.get("names_found") == 3 and payload.get("phones_found") == 2 and payload.get("emails_found") == 2, str(payload))
+
+        restore_response = client.post(
+            "/restore",
+            json={"session_id": session_id, "text": redacted_text},
+        )
+        check("restore endpoint status", restore_response.status_code == 200, restore_response.text)
+        if restore_response.status_code == 200:
+            restored_text = restore_response.json().get("text")
+            check("restore endpoint reconstructs text", restored_text == input_text, repr(restored_text))
+
+        invalid_response = client.post(
+            "/restore",
+            json={"session_id": str(uuid4()), "text": "Patient [NAME_001]"},
+        )
+        check("invalid session returns 404", invalid_response.status_code == 404, invalid_response.text)
+
+        expired_session_id = create_session(ttl_seconds=0.05)
+        store_mapping(expired_session_id, "NAME_001", "Expired Patient")
+        time.sleep(0.06)
+        expired_response = client.post(
+            "/restore",
+            json={"session_id": expired_session_id, "text": "Patient [NAME_001]"},
+        )
+        check("expired session returns 404", expired_response.status_code == 404, expired_response.text)
+    except Exception as exc:
+        print(f"  pseudonymization_api_tests              {FAIL} error: {exc}")
+        total.fn += 1
+    finally:
+        if session_id:
+            delete_session(session_id)
+
+    return total
+
+
 def print_summary(
     name_result: EvalResult,
     regex_result: EvalResult,
     merge_result: EvalResult,
     integration_result: EvalResult,
+    pseudonymization_result: EvalResult,
 ) -> None:
-    combined = name_result + regex_result + merge_result + integration_result
+    combined = (
+        name_result
+        + regex_result
+        + merge_result
+        + integration_result
+        + pseudonymization_result
+    )
     print("\n" + "=" * 72)
     print("OVERALL EVALUATION SUMMARY")
     print("=" * 72)
@@ -631,6 +746,7 @@ def print_summary(
         ("Regex Detection", regex_result),
         ("Merge Helpers", merge_result),
         ("Integration", integration_result),
+        ("Pseudonymization API", pseudonymization_result),
         ("Combined", combined),
     ):
         print(
@@ -652,4 +768,11 @@ if __name__ == "__main__":
     regex_result = run_regex_tests()
     merge_result = run_entity_merge_tests()
     integration_result = run_structured_redaction_integration_tests()
-    print_summary(name_result, regex_result, merge_result, integration_result)
+    pseudonymization_result = run_pseudonymization_api_tests()
+    print_summary(
+        name_result,
+        regex_result,
+        merge_result,
+        integration_result,
+        pseudonymization_result,
+    )
