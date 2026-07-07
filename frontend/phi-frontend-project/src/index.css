@@ -1,0 +1,181 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 236 254 255;
+    --foreground: 22 78 99;
+
+    --card: 255 255 255;
+    --card-foreground: 22 78 99;
+
+    --popover: 255 255 255;
+    --popover-foreground: 22 78 99;
+
+    --primary: 8 145 178;
+    --primary-foreground: 255 255 255;
+
+    --secondary: 34 211 238;
+    --secondary-foreground: 8 51 68;
+
+    --accent: 5 150 105;
+    --accent-foreground: 255 255 255;
+
+    --muted: 232 241 246;
+    --muted-foreground: 71 105 122;
+
+    --destructive: 220 38 38;
+    --destructive-foreground: 255 255 255;
+
+    --success: 5 150 105;
+    --success-foreground: 255 255 255;
+
+    --border: 165 243 252;
+    --input: 186 230 240;
+    --ring: 8 145 178;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 7 19 26;
+    --foreground: 224 247 250;
+
+    --card: 13 28 37;
+    --card-foreground: 224 247 250;
+
+    --popover: 13 28 37;
+    --popover-foreground: 224 247 250;
+
+    --primary: 34 184 217;
+    --primary-foreground: 6 20 26;
+
+    --secondary: 34 211 238;
+    --secondary-foreground: 6 20 26;
+
+    --accent: 16 185 129;
+    --accent-foreground: 4 20 14;
+
+    --muted: 22 35 44;
+    --muted-foreground: 148 178 189;
+
+    --destructive: 239 68 68;
+    --destructive-foreground: 255 255 255;
+
+    --success: 16 185 129;
+    --success-foreground: 4 20 14;
+
+    --border: 31 53 66;
+    --input: 31 53 66;
+    --ring: 34 184 217;
+  }
+
+  :root[data-accent="violet"] {
+    --primary: 124 58 237;
+    --primary-foreground: 255 255 255;
+    --secondary: 167 139 250;
+    --secondary-foreground: 46 16 101;
+    --ring: 124 58 237;
+  }
+  .dark[data-accent="violet"] {
+    --primary: 167 139 250;
+    --primary-foreground: 30 8 66;
+    --secondary: 196 181 253;
+    --secondary-foreground: 30 8 66;
+    --ring: 167 139 250;
+  }
+
+  :root[data-accent="emerald"] {
+    --primary: 5 150 105;
+    --primary-foreground: 255 255 255;
+    --secondary: 52 211 153;
+    --secondary-foreground: 6 78 59;
+    --ring: 5 150 105;
+  }
+  .dark[data-accent="emerald"] {
+    --primary: 52 211 153;
+    --primary-foreground: 4 32 20;
+    --secondary: 110 231 183;
+    --secondary-foreground: 4 32 20;
+    --ring: 52 211 153;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+    min-height: 100dvh;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  ::selection {
+    @apply bg-primary/20 text-foreground;
+  }
+
+  /* Tabular, monospaced figures for entity counters, session ids, timers */
+  .font-data {
+    @apply font-mono tabular-nums;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-primary/25 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-primary/40;
+  }
+}
+
+@layer utilities {
+  .bg-grid {
+    background-image:
+      linear-gradient(rgb(var(--primary) / 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--primary) / 0.08) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .redaction-bar {
+    position: relative;
+    display: inline-block;
+  }
+
+  .redaction-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgb(var(--foreground));
+    border-radius: 3px;
+    animation: redact-sweep 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

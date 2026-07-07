@@ -23,7 +23,7 @@ try:
 except ImportError:  # pragma: no cover - supports direct script execution.
     from mapping_store import create_session, delete_session, get_mapping, store_mapping
 
-from transformer_ner import (
+from .transformer_ner import (
     NameEntity,
     detect_name_entities,
     post_process_name_entities,
@@ -83,7 +83,10 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def _cors_origins() -> list[str]:
-    configured = os.getenv("CORS_ALLOW_ORIGINS", "https://yourdomain.com")
+    configured = os.getenv(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
     return [origin.strip() for origin in configured.split(",") if origin.strip()]
 
 
