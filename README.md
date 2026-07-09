@@ -2,7 +2,7 @@
 ### Infotact Solutions — Cybersecurity Internship 2026
 ### Project 2: HealthTech — Automated PHI/PII Redaction Pipeline for LLMs
 
----
+
 
 ## What This Project Does
 
