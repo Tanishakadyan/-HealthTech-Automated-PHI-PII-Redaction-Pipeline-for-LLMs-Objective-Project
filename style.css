@@ -1,0 +1,301 @@
+/*
+  ============================================================
+  FILE: style.css
+  MEMBER 4: Frontend + Documentation
+  PROJECT: PHI/PII Redaction Pipeline
+  ============================================================
+
+  DAY 1  → File created, linked in index.html
+  DAY 4  → Result card base styles
+  DAY 6  → Body background, font, navbar shadow, footer styles
+  DAY 9  → Entity badge colors (NAME, PHONE, EMAIL, ADDRESS, MRN, DATE)
+  DAY 12 → Stats bar and entity count badge styles
+  DAY 15 → Entity breakdown panel styles
+  DAY 17 → Mobile responsive @media queries
+  DAY 19 → Focus ring accessibility styles
+  DAY 20 → Final review, cleaned up unused rules
+  ============================================================
+*/
+
+
+/* ============================================================
+   DAY 6: GLOBAL BASE STYLES
+   Applied to the entire page.
+   ============================================================ */
+
+/* DAY 6: Light grey background so white cards stand out */
+body {
+  background-color: #f0f2f5;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: #212529;
+}
+
+/* DAY 6: Limit max width so content doesn't stretch too wide on big monitors */
+.container {
+  max-width: 1100px;
+}
+
+
+/* ============================================================
+   DAY 6: NAVBAR
+   ============================================================ */
+
+/* DAY 6: Subtle shadow under the navbar to separate it from content */
+.navbar {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+
+/* ============================================================
+   DAY 4: RESULT CARD (where redacted text appears)
+   ============================================================ */
+
+/* DAY 4: The output box where redacted text is displayed */
+#resultCard {
+  background-color: #ffffff;
+  border-color: #dee2e6 !important;
+  /* line-height: set in HTML inline style */
+  /* overflow-y: set in HTML inline style */
+  word-wrap: break-word;     /* DAY 17: prevents long words from overflowing */
+  word-break: break-word;
+}
+
+/* DAY 4: When hovered, slightly highlight the result card border */
+#resultCard:hover {
+  border-color: #adb5bd !important;
+}
+
+
+/* ============================================================
+   DAY 3: TEXTAREA INPUT
+   ============================================================ */
+
+/* DAY 3: Allow vertical resize only (not horizontal — avoids layout breaking) */
+textarea#inputText {
+  resize: vertical;
+  font-size: 13px;
+  font-family: 'Segoe UI', sans-serif;
+  line-height: 1.6;
+}
+
+/* DAY 17: On mobile, limit textarea height so it doesn't take the whole screen */
+@media (max-width: 576px) {
+  textarea#inputText {
+    rows: 6;
+    min-height: 150px;
+  }
+}
+
+
+/* ============================================================
+   DAY 9: ENTITY BADGE / REDACTED TOKEN STYLES
+   These are the colored highlight badges shown in the result card.
+   Each entity type (NAME, PHONE etc.) gets its own color class.
+
+   Base class: .redacted-token
+   Specific colors: .entity-NAME, .entity-PHONE, etc.
+   ============================================================ */
+
+/* DAY 9: BASE BADGE STYLE — applied to all entity badges */
+.redacted-token {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 1px 2px;
+  border: 1px solid transparent;
+  cursor: default;
+  /* DAY 20: smooth transition for hover effect */
+  transition: opacity 0.15s ease;
+}
+
+/* DAY 20: Slight transparency on hover to indicate it's a badge */
+.redacted-token:hover {
+  opacity: 0.8;
+}
+
+/* DAY 9: NAME entities → Blue badge */
+.entity-NAME {
+  background-color: #cfe2ff;   /* light blue fill */
+  border-color: #9ec5fe;       /* medium blue border */
+  color: #084298;              /* dark blue text */
+}
+
+/* DAY 9: PHONE entities → Green badge */
+.entity-PHONE {
+  background-color: #d1e7dd;   /* light green fill */
+  border-color: #a3cfbb;       /* medium green border */
+  color: #0a3622;              /* dark green text */
+}
+
+/* DAY 9: EMAIL entities → Teal/Green badge */
+.entity-EMAIL {
+  background-color: #d2f4ea;
+  border-color: #75ddb8;
+  color: #0d503c;
+}
+
+/* DAY 9: ADDRESS entities → Red/Pink badge */
+.entity-ADDRESS {
+  background-color: #f8d7da;   /* light red fill */
+  border-color: #f1aeb5;       /* medium red border */
+  color: #842029;              /* dark red text */
+}
+
+/* DAY 9: MRN (Medical Record Number) → Purple badge */
+.entity-MRN {
+  background-color: #e2d9f3;   /* light purple fill */
+  border-color: #c5b3e6;       /* medium purple border */
+  color: #432874;              /* dark purple text */
+}
+
+/* DAY 9: DATE entities → Amber/Yellow badge */
+.entity-DATE {
+  background-color: #fff3cd;   /* light yellow fill */
+  border-color: #ffc107;       /* amber border */
+  color: #664d03;              /* dark brown-yellow text */
+}
+
+
+/* ============================================================
+   DAY 12: ENTITY COUNT BADGES (in the breakdown panel)
+   Slightly larger version of the entity badge for the
+   breakdown section that shows "NAME: 2" etc.
+   ============================================================ */
+
+/* DAY 12: Larger badge used in entity breakdown section */
+.entity-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;     /* pill shape */
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+
+/* ============================================================
+   DAY 6: CARD STYLES
+   ============================================================ */
+
+/* DAY 6: Cards have very subtle shadow for depth */
+.card {
+  border: 1px solid #e5e7eb;
+}
+
+.card-header {
+  border-bottom: 1px solid #e5e7eb !important;
+}
+
+
+/* ============================================================
+   DAY 6: FOOTER
+   ============================================================ */
+
+footer {
+  background-color: #ffffff;
+  margin-top: 2rem;
+}
+
+
+/* ============================================================
+   DAY 17: MOBILE RESPONSIVE STYLES
+   @media (max-width: 768px) = applies only on screens smaller than 768px (tablets/phones)
+   @media (max-width: 576px) = applies only on very small phones
+   ============================================================ */
+
+/* DAY 17: On tablets and phones */
+@media (max-width: 768px) {
+
+  /* DAY 17: Less padding on sides on mobile */
+  .container {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  /* DAY 17: Add space between the two stacked columns on mobile */
+  #input-section {
+    margin-bottom: 1rem;
+  }
+
+  /* DAY 17: Make buttons wrap nicely on small screens */
+  .d-flex.gap-2 {
+    flex-wrap: wrap;
+  }
+
+  /* DAY 17: Smaller buttons on mobile */
+  .btn {
+    font-size: 13px;
+    padding: 6px 14px;
+  }
+
+  /* DAY 17: Shorter result card on mobile so user doesn't have to scroll too much */
+  #resultCard {
+    max-height: 280px !important;
+  }
+
+  /* DAY 17: Navbar brand smaller on mobile */
+  .navbar-brand {
+    font-size: 15px !important;
+  }
+}
+
+/* DAY 17: Extra small phones */
+@media (max-width: 576px) {
+
+  /* DAY 17: Sample buttons stack on very small screens */
+  .sample-btn {
+    font-size: 12px;
+    padding: 4px 10px;
+  }
+
+  /* DAY 17: Navbar simplified on very small phones */
+  .navbar {
+    padding: 10px 16px;
+  }
+}
+
+
+/* ============================================================
+   DAY 19: ACCESSIBILITY — FOCUS RING STYLES
+   Makes keyboard navigation visible.
+   ============================================================ */
+
+/* DAY 19: Custom blue focus ring on interactive elements */
+button:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 3px solid #0d6efd;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+
+/* ============================================================
+   DAY 15: STATS BAR
+   ============================================================ */
+
+/* DAY 15: Stats alert bar styling */
+#statsBar {
+  border-radius: 6px;
+  border-left: 4px solid #0dcaf0;
+}
+
+
+/* ============================================================
+   DAY 20: LOADING SPINNER OVERRIDE
+   Bootstrap sometimes fights with display:none — this ensures
+   the spinner hides/shows correctly via JavaScript.
+   ============================================================ */
+
+/* DAY 20: Utility class toggled by JavaScript */
+.show-flex {
+  display: flex !important;
+}
+
+.show-block {
+  display: block !important;
+}

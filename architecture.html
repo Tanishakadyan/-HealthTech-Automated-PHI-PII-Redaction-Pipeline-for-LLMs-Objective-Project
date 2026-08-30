@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  ============================================================
+  FILE: architecture.html
+  MEMBER 4: Frontend + Documentation
+  DAY 13 → System architecture flow diagram created
+  DAY 19 → Accessibility title and aria labels added
+  DAY 20 → Final styling review
+  ============================================================
+-->
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System Architecture | PHI Redaction Pipeline</title>
+  <style>
+    /* DAY 13: Page background and font */
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f0f4ff;
+      margin: 0;
+      padding: 40px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* DAY 13: Page title */
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #1e3a5f;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: #6c757d;
+      margin-bottom: 40px;
+      text-align: center;
+    }
+
+    /* DAY 13: The vertical flow container */
+    .flow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      width: 100%;
+      max-width: 520px;
+    }
+
+    /* DAY 13: Each box in the flow */
+    .box {
+      background: white;
+      border-radius: 12px;
+      padding: 18px 28px;
+      text-align: center;
+      width: 100%;
+      box-sizing: border-box;
+      border: 2px solid;
+    }
+
+    /* DAY 13: Box title */
+    .box-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    /* DAY 13: Box member label */
+    .box-member {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* DAY 13: Box description */
+    .box-desc {
+      font-size: 12px;
+      color: #495057;
+      line-height: 1.5;
+    }
+
+    /* DAY 13: Arrow between boxes */
+    .arrow {
+      font-size: 28px;
+      line-height: 1;
+      padding: 4px 0;
+      color: #6c757d;
+    }
+
+    /* DAY 13: Color themes per layer */
+    .layer-frontend  { border-color: #0d6efd; }
+    .layer-frontend .box-title  { color: #0a4fc4; }
+    .layer-frontend .box-member { color: #0d6efd; }
+
+    .layer-backend   { border-color: #6f42c1; }
+    .layer-backend .box-title   { color: #4c2b8a; }
+    .layer-backend .box-member  { color: #6f42c1; }
+
+    .layer-detection { border-color: #d63384; }
+    .layer-detection .box-title { color: #9b1f5c; }
+    .layer-detection .box-member{ color: #d63384; }
+
+    .layer-database  { border-color: #0dcaf0; }
+    .layer-database .box-title  { color: #087990; }
+    .layer-database .box-member { color: #0dcaf0; }
+
+    .layer-output    { border-color: #198754; }
+    .layer-output .box-title    { color: #0f5132; }
+    .layer-output .box-member   { color: #198754; }
+
+    /* DAY 13: Tech stack tags */
+    .tech-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      justify-content: center;
+      margin-top: 8px;
+    }
+
+    .tech-tag {
+      font-size: 11px;
+      padding: 2px 8px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 20px;
+      color: #495057;
+    }
+
+    /* DAY 13: Footer note */
+    .note {
+      margin-top: 32px;
+      font-size: 12px;
+      color: #6c757d;
+      text-align: center;
+      max-width: 500px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- DAY 13: Page heading -->
+  <h1>PHI/PII Redaction Pipeline — System Architecture</h1>
+  <p class="subtitle">Infotact Internship &mdash; HealthTech Cybersecurity Project</p>
+
+  <!-- DAY 13: Architecture flow diagram -->
+  <div class="flow" role="img" aria-label="System architecture flow diagram">
+
+    <!-- DAY 13: Layer 1 — Frontend (Member 4) -->
+    <div class="box layer-frontend">
+      <div class="box-member">Member 4 — Your Work</div>
+      <div class="box-title">Frontend Interface</div>
+      <div class="box-desc">User enters clinical text → clicks Redact → sees colored result</div>
+      <div class="tech-tags">
+        <span class="tech-tag">HTML5</span>
+        <span class="tech-tag">Bootstrap 5</span>
+        <span class="tech-tag">JavaScript</span>
+        <span class="tech-tag">Fetch API</span>
+      </div>
+    </div>
+
+    <div class="arrow">&#8595;</div>
+
+    <!-- DAY 13: Layer 2 — Backend API (Member 1) -->
+    <div class="box layer-backend">
+      <div class="box-member">Member 1</div>
+      <div class="box-title">Backend API</div>
+      <div class="box-desc">FastAPI server receives text → routes to detection → returns JSON</div>
+      <div class="tech-tags">
+        <span class="tech-tag">Python 3.10+</span>
+        <span class="tech-tag">FastAPI</span>
+        <span class="tech-tag">POST /redact</span>
+        <span class="tech-tag">POST /restore</span>
+      </div>
+    </div>
+
+    <div class="arrow">&#8595;</div>
+
+    <!-- DAY 13: Layer 3 — PHI Detection (Member 2) -->
+    <div class="box layer-detection">
+      <div class="box-member">Member 2</div>
+      <div class="box-title">PHI Detection Engine</div>
+      <div class="box-desc">NLP models scan text → identify PHI entities → assign labels</div>
+      <div class="tech-tags">
+        <span class="tech-tag">Microsoft Presidio</span>
+        <span class="tech-tag">spaCy NER</span>
+        <span class="tech-tag">Regex Patterns</span>
+      </div>
+    </div>
+
+    <div class="arrow">&#8595;</div>
+
+    <!-- DAY 13: Layer 4 — Redis Storage (Member 3) -->
+    <div class="box layer-database">
+      <div class="box-member">Member 3</div>
+      <div class="box-title">Token Storage</div>
+      <div class="box-desc">Redis stores mapping: PATIENT_001 ↔ John Smith (reversible)</div>
+      <div class="tech-tags">
+        <span class="tech-tag">Redis</span>
+        <span class="tech-tag">Token Mapping</span>
+        <span class="tech-tag">Secure Storage</span>
+      </div>
+    </div>
+
+    <div class="arrow">&#8595;</div>
+
+    <!-- DAY 13: Layer 5 — Output -->
+    <div class="box layer-output">
+      <div class="box-member">Result</div>
+      <div class="box-title">Redacted Output</div>
+      <div class="box-desc">Safe anonymized text returned to frontend with entity metadata</div>
+      <div class="tech-tags">
+        <span class="tech-tag">JSON Response</span>
+        <span class="tech-tag">Entity Labels</span>
+        <span class="tech-tag">HIPAA Safe</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- DAY 19: Accessibility note and legend -->
+  <p class="note">
+    This diagram shows the complete data flow for the PHI/PII Redaction Pipeline.
+    All sensitive patient data is anonymized before leaving the organization's network.
+    Restore functionality uses the Redis token map to de-anonymize locally.
+  </p>
+
+</body>
+</html>
